@@ -73,10 +73,10 @@ class Pigment(Spectra):
             raise ValueError("Must either specify reflectance or k and s coefficients.")
 
     def compute_k_s(self) -> Tuple[npt.NDArray, npt.NDArray]:
-        # Walowit 1987
+        # Walowit · 1987
         k, s = [], []
         for wavelength, r in self.reflectance:
-            #
+            # SK Loyalka · 1995 for corrected coefficient
             k_over_s = (1 - r) * (1 - r) / (4 * r)
             A = np.array([[-1, k_over_s], [1, 1]])
             b = np.array([0, 1])

@@ -1,20 +1,12 @@
-import torch as th
-import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
-
 from typing import List, Tuple
 
 import numpy as np
+import torch as th
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
 
 from spectra import Spectra, Pigment
-
-
-def gaussian(x, A, mu, sigma):
-    return A * np.exp(-(x - mu)**2 / (2 * sigma**2))
-
-
-wavelengths = np.arange(400, 701)
 
 
 class ColorMatchingModel(nn.Module):
@@ -48,7 +40,7 @@ def matching_metric(concentrations: th.Tensor, target_rgb: th.Tensor,
     K_matrix, S_matrix = k_s_from_pigments(pigments)
 
     K_mix = th.matmul(K_matrix, concentrations)
-    S_mix = th.matmul(S_matrix,  concentrations)
+    S_mix = th.matmul(S_matrix, concentrations)
 
     R_mix = 1 + (K_mix / S_mix) - th.sqrt(th.square(K_mix / S_mix) + (2 * K_mix / S_mix))
 
@@ -59,7 +51,13 @@ def matching_metric(concentrations: th.Tensor, target_rgb: th.Tensor,
     return l2_loss
 
 
+def gaussian(x, A, mu, sigma):
+    return A * np.exp(-(x - mu) ** 2 / (2 * sigma ** 2))
+
+
 def train():
+    wavelengths = np.arange(400, 701)
+
     """
     RGB Basis (approximation)
     """
@@ -103,7 +101,7 @@ def train():
         loss.backward()
         optimizer.step()
 
-        if not epoch % 10 and epoch:
+        if not epoch % 10:
             print(f"Epoch {epoch}, Loss: {loss.item()}")
 
     print("Learned Concentrations:", F.softmax(model.weights.data, dim=0).numpy())
