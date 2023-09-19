@@ -76,6 +76,7 @@ class Pigment(Spectra):
         # Walowit 1987
         k, s = [], []
         for wavelength, r in self.reflectance:
+            #
             k_over_s = (1 - r) * (1 - r) / (4 * r)
             A = np.array([[-1, k_over_s], [1, 1]])
             b = np.array([0, 1])

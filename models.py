@@ -71,7 +71,7 @@ def train():
     rgb_observer = th.from_numpy(np.vstack([red_curve, green_curve, blue_curve])).float()
 
     """
-    CMYK Basis (bad approximation)
+    CMYK Basis (bad approximation of this data https://www.diva-portal.org/smash/get/diva2:227132/FULLTEXT01.pdf)
     """
     cyan_curve = gaussian(wavelengths, 0.75, 645, 15)
     magenta_curve = gaussian(wavelengths, 0.6, 550, 50) + gaussian(wavelengths, 0.6, 400, 50)
@@ -86,7 +86,7 @@ def train():
     pigments = [cyan, magenta, yellow, key]
 
     """
-    Training
+    Color Matching
     """
     model = ColorMatchingModel(len(pigments))
     target_rgb = th.tensor([0.0, 0.39, 0.39])  # cyan
