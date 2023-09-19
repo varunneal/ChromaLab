@@ -43,6 +43,8 @@ def matching_metric(concentrations: th.Tensor, target_rgb: th.Tensor,
     S_mix = th.matmul(S_matrix, concentrations)
 
     R_mix = 1 + (K_mix / S_mix) - th.sqrt(th.square(K_mix / S_mix) + (2 * K_mix / S_mix))
+    # todo: given reflectance coefficients, can account for surface reflection.
+    #  Okumura • 2005 is a database of such coefficients.
 
     final_pred = th.matmul(observer, R_mix)
 
