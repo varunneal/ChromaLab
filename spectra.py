@@ -30,8 +30,24 @@ class Spectra:
 
         self.reflectance = reflectance
 
-    def plot(self, name, color):
-        plt.plot(self.reflectance[:, 0], self.reflectance[:, 1], label=name, color=color)
+    def plot(self, name, color, alpha=1.0):
+        plt.plot(self.reflectance[:, 0], self.reflectance[:, 1], label=name, color=color, alpha=alpha)
+
+    def interpolated_value(self, wavelength) -> float:
+        wavelengths = self.wavelengths()
+        idx = np.searchsorted(wavelengths, wavelength)
+
+        if idx == 0 or idx == len(wavelengths):
+            return 0
+
+        if wavelengths[idx] == wavelength:
+            return self.reflectance[idx, 1]
+
+        # Linearly interpolate between the nearest wavelengths
+        x1, y1 = wavelengths[idx - 1], self.reflectance[idx - 1, 1]
+        x2, y2 = wavelengths[idx], self.reflectance[idx, 1]
+
+        return y1 + (y2 - y1) * (wavelength - x1) / (x2 - x1)
 
     def wavelengths(self) -> npt.NDArray:
         return self.reflectance[:, 0]
@@ -73,7 +89,8 @@ class Pigment(Spectra):
             raise ValueError("Must either specify reflectance or k and s coefficients.")
 
     def compute_k_s(self) -> Tuple[npt.NDArray, npt.NDArray]:
-        # Walowit · 1987
+        # Walowit · 1987 specifies this least squares method
+        # todo: GJK method as per Centore • 2015
         k, s = [], []
         for wavelength, r in self.reflectance:
             # SK Loyalka · 1995 for corrected coefficient

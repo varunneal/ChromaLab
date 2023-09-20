@@ -68,7 +68,10 @@ def train():
     green_curve = gaussian(wavelengths, 0.75, 550, 15)
     red_curve = gaussian(wavelengths, 0.75, 600, 15) + gaussian(wavelengths, 0.2, 450, 15)
 
+    # rgb_observer could also be created using an sRGB chromaticity matrix
     rgb_observer = th.from_numpy(np.vstack([red_curve, green_curve, blue_curve])).float()
+    # XYZ observers can also use chromaticity matrices
+    # conal observers (e.g. trichromats) can be specified easily using cone absorption data
 
     """
     CMYK Basis (bad approximation of this data https://www.diva-portal.org/smash/get/diva2:227132/FULLTEXT01.pdf)
