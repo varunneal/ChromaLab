@@ -5,10 +5,25 @@ import numpy as np
 import numpy.typing as npt
 
 
+# from colour import SDS_ILLUMINANTS, CCS_ILLUMINANTS, convert
+
+def gaussian(x, A, mu, sigma):
+    return A * np.exp(-(x - mu) ** 2 / (2 * sigma ** 2))
+
+
+def piecewise_gaussian(x, A, mu, sigma1, sigma2):
+    return np.piecewise(x, [x < mu, x >= mu],
+                        [lambda t: gaussian(t, A, mu, sigma1), lambda t: gaussian(t, A, mu, sigma2)])
+
+
 class Spectra:
     def __init__(self, reflectance: Optional[npt.NDArray] = None,
                  wavelengths: Optional[npt.NDArray] = None,
                  data: Optional[npt.NDArray] = None):
+        """
+        Either provide `reflectance` as a two column NDArray or provide both
+        `wavelengths` and `data` as single column NDArrays.
+        """
         if reflectance is None:
             reflectance = np.column_stack((wavelengths, data))
         if not isinstance(reflectance, np.ndarray):
@@ -30,8 +45,63 @@ class Spectra:
 
         self.reflectance = reflectance
 
-    def plot(self, name, color, alpha=1.0):
-        plt.plot(self.reflectance[:, 0], self.reflectance[:, 1], label=name, color=color, alpha=alpha)
+        lbda = self.wavelengths()
+        x_bar = piecewise_gaussian(lbda, 1.056, 599.8, 37.9, 31.0) + \
+            piecewise_gaussian(lbda, 0.362, 442.0, 16.0, 26.7) + \
+            piecewise_gaussian(lbda, -0.065, 501.1, 20.4, 26.2)
+        y_bar = piecewise_gaussian(lbda, 0.821, 568.8, 46.9, 40.5) + \
+                piecewise_gaussian(lbda, 0.286, 530.9, 16.3, 31.1)
+        z_bar = piecewise_gaussian(lbda, 1.217, 437.0, 11.8, 36.0) + \
+                piecewise_gaussian(lbda, 0.681, 459.0, 26.0, 13.8)
+
+        self.xyz_matrix = np.stack([x_bar, y_bar, z_bar])
+
+    def to_xyz(self):
+        # some problems:
+        # xyz matrix is generated assuming a specific whitepoint
+        # the data is generated using a (perhaps distinct) specific whitepoint
+
+        # see https://en.wikipedia.org/wiki/CIE_1931_color_space#Color_matching_functions
+        xyz = np.matmul(self.xyz_matrix, self.data())
+        whitepoint = np.matmul(self.xyz_matrix, np.ones_like(self.data()))
+
+        return np.divide(xyz, whitepoint)
+
+    def to_rgb(self):
+        # todo: this is bad for some reason. Have tried multiple matrices.
+        # see https://en.wikipedia.org/wiki/CIE_1931_color_space#Construction_of_the_CIE_XYZ_color_space_from_the_Wright%E2%80%93Guild_data
+        # and http://www.brucelindbloom.com/index.html?Eqn_RGB_XYZ_Matrix.html
+        xyz = self.to_xyz()
+        # transform_matrix = np.array([
+        #     [2.37, -0.9, -0.47],
+        #     [-0.51, 1.4, 0.09],
+        #     [0.005, -0.01, 1.01]
+        # ])
+        transform_matrix = np.array([
+            [2.85, -1.36, -0.47],
+            [-1.09, 2.03, 0.227],
+            [0.103, -0.296, 1.45]
+        ])
+        rgb = np.matmul(transform_matrix, xyz)
+        return np.clip(rgb, 0, 1)
+
+    def plot(self, name="spectra", color=None, ax=None, alpha=1.0):
+        if color is None:
+            color = self.to_rgb()
+        if not ax:
+            plt.plot(self.reflectance[:, 0], self.reflectance[:, 1], label=name, color=color, alpha=alpha)
+        else:
+            ax.plot(self.reflectance[:, 0], self.reflectance[:, 1], label=name, color=color, alpha=alpha)
+
+    def interpolate_values(self, wavelengths: Union[npt.NDArray, None]) -> 'Spectra':
+        if wavelengths is None:
+            return self
+        interpolated_data = []
+        for wavelength in wavelengths:
+            d = self.interpolated_value(wavelength)
+            interpolated_data.append(d)
+        return Spectra(wavelengths=wavelengths, data=np.array(interpolated_data))
+
 
     def interpolated_value(self, wavelength) -> float:
         wavelengths = self.wavelengths()
@@ -51,6 +121,31 @@ class Spectra:
 
     def wavelengths(self) -> npt.NDArray:
         return self.reflectance[:, 0]
+
+    def data(self) -> npt.NDArray:
+        return self.reflectance[:, 1]
+
+    def __add__(self, other: Union['Spectra', float, int]) -> 'Spectra':
+        # todo: can add ndarray support
+        if isinstance(other, float) or isinstance(other, int):
+            return Spectra(wavelengths=self.wavelengths(), data=np.clip(self.data() + other, 0, 1))
+
+        if not np.array_equal(other.wavelengths(), self.wavelengths()):
+            raise TypeError(f"Interpolation not supported for addition.")
+        # todo: can add interpolation
+
+        return Spectra(wavelengths=self.wavelengths(), data=self.data() + other.data())
+
+    def __mul__(self, scalar: Union[int, float]):
+        return Spectra(wavelengths=self.wavelengths(), data=np.clip(scalar * self.data(), 0, 1))
+
+    def __rmul__(self, scalar: Union[int, float]):
+        # This method allows scalar * Spectra to work
+        return self.__mul__(scalar)
+
+    def __pow__(self, exponent: float):
+        new_data = np.power(self.data(), exponent)
+        return Spectra(wavelengths=self.wavelengths(), data=new_data)
 
     def __str__(self):
         return str(self.reflectance)
