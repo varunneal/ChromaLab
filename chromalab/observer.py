@@ -4,7 +4,7 @@ from typing import List, Union, Optional
 import numpy as np
 import numpy.typing as npt
 
-from spectra import Spectra
+from .spectra import Spectra
 
 
 def gaussian(x, A, mu, sigma):
@@ -77,7 +77,7 @@ def neitz_cone(wavelengths, lambda_max=559, OD=0.30, output='alog'):
 
 
 class Cone(Spectra):
-    cone_data = np.genfromtxt('data/cones/ss2deg_10lin.csv', delimiter=',')
+    cone_data = np.genfromtxt('../data/cones/ss2deg_10lin.csv')
 
     def __init__(self, reflectance: Optional[Union[Spectra, npt.NDArray]] = None,
                  wavelengths: Optional[npt.NDArray] = None,

@@ -9,15 +9,16 @@ from scipy.spatial import ConvexHull
 from scipy.spatial.distance import cdist
 
 from typing import Tuple, Iterable, List
-
-import math
-
-from spectra import Spectra, Pigment
 from tqdm import tqdm
 from itertools import product
 
-from observer import Observer
 from collections import defaultdict
+import math
+
+from .spectra import Spectra, Pigment
+from .observer import Observer
+
+
 
 
 def get_metamers(points, target, threshold=1e-2, axis=2):
