@@ -1,13 +1,8 @@
-from typing import List, Tuple, Optional, Union
+from typing import List, Optional
 
 import matplotlib.pyplot as plt
-from matplotlib.colors import to_rgba
-
 import numpy as np
-import numpy.typing as npt
-
-from itertools import combinations
-
+from matplotlib.colors import to_rgba
 
 from spectra import Spectra, Pigment
 
@@ -33,97 +28,7 @@ def mix(pigment1: Pigment, pigment2: Pigment, concentrations: Optional[List[floa
     return Pigment(k=k, s=s)
 
 
-class Cone(Spectra):
-    def __init__(self, reflectance: npt.NDArray):
-        super().__init__(reflectance)
-
-
-class Observer:
-    def __init__(self, sensors: List[Spectra]):
-        self.dimension = len(sensors)
-        self.sensors = sensors
-
-        total_wavelengths = np.unique(np.concatenate([sensor.wavelengths() for sensor in sensors]))
-        num_wavelengths = len(total_wavelengths)
-
-        self.sensor_matrix = np.zeros((self.dimension, num_wavelengths))
-
-        for i, sensor in enumerate(sensors):
-            for j, wavelength in enumerate(total_wavelengths):
-                self.sensor_matrix[i, j] = sensor.interpolated_value(wavelength)
-
-    def get_full_colors(self) -> npt.NDArray:
-        # calculates the hull of the gamut using schrodinger's transition functions for optimal colors
-        num_wavelengths = self.sensor_matrix.shape[1]
-
-        transitions = []
-        min_transition_size = 10
-        indices = list(range(num_wavelengths // min_transition_size))
-
-        for selected_indices in combinations(indices, 2 * (self.dimension - 1)):
-            sorted_indices = sorted(selected_indices)
-            intervals = [(sorted_indices[i], sorted_indices[i + 1]) for i in range(0, len(sorted_indices), 2)]
-
-            transition = np.zeros(num_wavelengths)
-            for start, end in intervals:
-                transition[min_transition_size * start:min_transition_size * end] = 1
-
-            transitions.append(transition)
-
-        print(f"{len(transitions)} full colors generated.")
-
-        transitions_matrix = np.array(transitions).T
-
-        return np.matmul(self.sensor_matrix, transitions_matrix)
-
-
-def remove_trailing_nans(arr):
-    mask = np.any(np.isnan(arr), axis=1)
-    idx = np.where(mask)[0]
-    if idx.size > 0:
-        last_valid_idx = np.where(~mask)[0][-1]
-        return arr[:last_valid_idx + 1]
-    return arr
-
-
 def main():
-    """
-    Human cone data
-    """
-    cone_data = np.genfromtxt('linss2_10e_1.csv', delimiter=',')
-
-    s_cone = Cone(cone_data[:, [0, 1]])
-    m_cone = Cone(cone_data[:, [0, 2]])
-    l_cone = Cone(remove_trailing_nans(cone_data[:, [0, 3]]))
-
-    # s_cone.plot(name="s", color="b")
-    # m_cone.plot(name="m", color="g")
-    # l_cone.plot(name="l", color="r")
-    # plt.xlabel('wavelength (nm)')
-    # plt.ylabel('spectral reflectance')
-    # plt.title('Cones')
-    # plt.legend()
-    # plt.show()
-
-    trichromat = Observer([s_cone, m_cone, l_cone])
-    print(trichromat.sensor_matrix.shape)
-    full_colors_3d = trichromat.get_full_colors()
-    print(full_colors_3d.shape)
-
-    x,y,z = full_colors_3d
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    ax.scatter(x, y, z, s=1, c='blue', marker='o', alpha=0.5)  # s is the size of points, adjust as needed
-
-    # Labels and title
-    ax.set_xlabel('s')
-    ax.set_ylabel('m')
-    ax.set_zlabel('l')
-    ax.set_title('Trichromat Full Color Gamut')
-    ax.view_init(elev=30, azim=30)
-    plt.show()
-
-
     """
     Kubelka-Munk color mixing
     """
@@ -152,12 +57,12 @@ def main():
         # Convert the interpolated RGB to a matplotlib-readable format
         interp_color_str = f'#{int(interp_color[0] * 255):02X}{int(interp_color[1] * 255):02X}{int(interp_color[2] * 255):02X}'
 
-        # mixed_pigment.plot(name="", color=interp_color_str, alpha=alpha_value)
+        mixed_pigment.plot(name="", color=interp_color_str, alpha=alpha_value)
 
-    # yellow.plot(name='yellow', color='yellow')
-    # magenta.plot(name='magenta', color='magenta')
-    # plt.legend()
-    # plt.show()
+    yellow.plot(name='yellow', color='yellow')
+    magenta.plot(name='magenta', color='magenta')
+    plt.legend()
+    plt.show()
 
 
 main()
