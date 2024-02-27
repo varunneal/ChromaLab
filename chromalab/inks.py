@@ -15,9 +15,63 @@ from itertools import product
 from collections import defaultdict
 import math
 
-from .spectra import Spectra, Pigment
+from .spectra import Spectra
 from .observer import Observer
 
+
+
+class Pigment(Spectra):
+    def __init__(self, reflectance: Optional[Union[Spectra, npt.NDArray]] = None,
+                 k: Optional[npt.NDArray] = None,
+                 s: Optional[npt.NDArray] = None,
+                 wavelengths: Optional[npt.NDArray] = None):
+        """
+        Either pass in @param reflectance or pass in
+        @param k and @param s.
+
+        k and s are stored as spectra rather than NDArrays.
+        """
+        if reflectance is not None:
+            # compute k & s from reflectance
+            if isinstance(reflectance, Spectra):
+                super().__init__(reflectance.reflectance)
+            else:
+                super().__init__(reflectance)
+            _k, _s = self.compute_k_s()
+            self.k, self.s = _k, _s
+
+        elif k is not None and s is not None and wavelengths is not None:
+            # compute reflectance from k & s
+            if not k.shape == s.shape or not k.shape == wavelengths.shape:
+                raise ValueError("Coefficients k and s and wavelengths must be same shape.")
+
+            r = 1 + (k / s) - np.sqrt(np.square(k / s) + (2 * k / s))
+            super().__init__(wavelengths=wavelengths, data=r)
+        else:
+            raise ValueError("Must either specify reflectance or k and s coefficients and wavelengths.")
+
+    def compute_k_s(self) -> Tuple[npt.NDArray, npt.NDArray]:
+        # Walowit · 1987 specifies this least squares method
+        # todo: GJK method as per Centore • 2015
+        k, s = [], []
+        for wavelength, r in np.clip(self.reflectance, 1e-4, 1):
+            # SK Loyalka · 1995 suggests 4 instead of 2. I find 2 is better.
+            k_over_s = (1 - r) * (1 - r) / (2 * r)
+            A = np.array([[-1, k_over_s], [1, 1]])
+            b = np.array([0, 1])
+
+            AtA_inv = np.linalg.inv(np.dot(A.T, A))
+            Atb = np.dot(A.T, b)
+
+            _k, _s = np.clip(np.dot(AtA_inv, Atb), 0, 1)
+            k.append(_k)
+            s.append(_s)
+
+        return np.array(k), np.array(s)
+
+    def get_k_s(self) -> Tuple[npt.NDArray, npt.NDArray]:
+        # todo: pass in wavelength list for interpolation/sampling consistency with mixing
+        return self.k, self.s
 
 
 
@@ -387,3 +441,5 @@ class InkGamut:
             print(f"maximum distance is {dst} with percentages {pi} and {pj}")
 
         return dst
+
+

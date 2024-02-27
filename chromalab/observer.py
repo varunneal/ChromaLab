@@ -3,21 +3,15 @@ from typing import List, Union, Optional
 
 import numpy as np
 import numpy.typing as npt
+import pandas as pd
+
+from importlib import resources
 
 from .spectra import Spectra
 
 
 def gaussian(x, A, mu, sigma):
     return A * np.exp(-(x - mu) ** 2 / (2 * sigma ** 2))
-
-
-def remove_trailing_nans(arr):
-    mask = np.any(np.isnan(arr), axis=1)
-    idx = np.where(mask)[0]
-    if idx.size > 0:
-        last_valid_idx = np.where(~mask)[0][-1]
-        return arr[:last_valid_idx + 1]
-    return arr
 
 
 def neitz_cone(wavelengths, lambda_max=559, OD=0.30, output='alog'):
@@ -76,8 +70,20 @@ def neitz_cone(wavelengths, lambda_max=559, OD=0.30, output='alog'):
     return with_OD, extinction
 
 
+# class Photopigment(Spectra):
+#     templates = {
+#         "Neitz":
+#     }
+#
+#     def __init__(self, template: string, peak: Union[int, string]):
+
+
+
+
 class Cone(Spectra):
-    cone_data = np.genfromtxt('../data/cones/ss2deg_10lin.csv')
+    # TODO: refactor after analysis
+    with resources.path("chromalab.cones", "ss2deg_10lin.csv") as data_path:
+        cone_data = pd.read_csv(data_path, header=None).iloc[:-130, :]
 
     def __init__(self, reflectance: Optional[Union[Spectra, npt.NDArray]] = None,
                  wavelengths: Optional[npt.NDArray] = None,
@@ -127,33 +133,30 @@ class Cone(Spectra):
 
     @staticmethod
     def l_cone(wavelengths=None):
-        # 390 to 700
-        reflectances = Spectra(Cone.cone_data[:311, [0, 1]])
-        return Cone(reflectances.interpolate_values(wavelengths))
+        reflectances = Cone.cone_data.iloc[:, [0,1]].to_numpy()
+        return Cone(reflectances).interpolate_values(wavelengths)
 
     @staticmethod
     def shift_cone(shift, wavelengths=None):
-        m_cone = Cone.m_cone(wavelengths)
-        r = [(w, 1e-4) for w in m_cone.wavelengths() if w < m_cone.wavelengths()[0] + shift] + \
-            [(w + shift, v) for (w, v) in m_cone.reflectance if w + shift <= m_cone.wavelengths()[-1]]
-        return Cone(reflectance=np.array(r))
+        # todo: i think this is only works with 1nm stepsize wavelengths lmao
+        l_cone = Cone.l_cone()
+        r = [(w, 1e-4) for w in l_cone.wavelengths() if w < l_cone.wavelengths()[0] + shift] + \
+            [(w + shift, v) for (w, v) in l_cone.reflectance if w + shift <= l_cone.wavelengths()[-1]]
+        return Cone(reflectance=np.array(r)).interpolate_values(wavelengths)
 
     @staticmethod
     def q_cone(wavelengths=None):
-        return Cone.shift_cone(15, wavelengths=wavelengths)
+        return Cone.shift_cone(-15, wavelengths=wavelengths)
 
     @staticmethod
     def m_cone(wavelengths=None):
-        # 390 to 700
-        reflectances = Spectra(Cone.cone_data[:311, [0, 2]])
-        return Cone(reflectances.interpolate_values(wavelengths))
+        reflectances = Cone.cone_data.iloc[:, [0,2]].to_numpy()
+        return Cone(reflectances).interpolate_values(wavelengths)
 
     @staticmethod
     def s_cone(wavelengths=None):
-        # 390 to 700
-        reflectances = Spectra(remove_trailing_nans(Cone.cone_data[:311, [0, 3]]))
-        return Cone(reflectances.interpolate_values(wavelengths))
-
+        reflectances = Cone.cone_data.iloc[:, [0,3]].dropna().to_numpy()
+        return Cone(reflectances).interpolate_values(wavelengths)
 
 
 def get_m_transitions(m, wavelengths, both_types=True):
