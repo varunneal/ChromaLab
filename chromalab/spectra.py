@@ -10,36 +10,43 @@ from colour import SDS_ILLUMINANTS, SDS_LIGHT_SOURCES, sd_to_XYZ, XYZ_to_xy, XYZ
 
 
 class Spectra:
-    def __init__(self, reflectance: Optional[npt.NDArray] = None,
-                 wavelengths: Optional[npt.NDArray] = None,
-                 data: Optional[npt.NDArray] = None):
+    def __init__(self, array: Optional[Union[npt.NDArray]] = None,
+                 wavelengths: Optional[npt.NDArray] = None, data: Optional[npt.NDArray] = None,
+                 normalized: Optional[bool] = True, **kwargs):
         """
         Either provide `reflectance` as a two column NDArray or provide both
         `wavelengths` and `data` as single column NDArrays.
         """
-        if reflectance is None:
-            reflectance = np.column_stack((wavelengths, data))
-        if not isinstance(reflectance, np.ndarray):
+        if array is None:
+            array = np.column_stack((wavelengths, data))
+        if not isinstance(array, np.ndarray):
             raise TypeError("Input should be a numpy array")
 
-        if reflectance.shape[1] != 2:
+        if array.shape[1] != 2:
             raise ValueError("Array should have two columns")
 
-        first_col = reflectance[:, 0]
-        # if not (np.all(first_col >= 350) and np.all(first_col <= 850)):
-        #     raise ValueError("First column values should be between 350 and 850")
+        first_col = array[:, 0]
+        if not (np.all(first_col >= 0)):
+            raise ValueError("Wavelengths must be positive.")
 
         if not np.all(first_col == np.sort(first_col)):
-            raise ValueError("First column should be in ascending order")
+            raise ValueError("Wavelengths should be in ascending order")
 
-        second_col = reflectance[:, 1]
-        if not (np.all(second_col >= 0) and np.all(second_col <= 1)):
-            # TODO: Makes fluorescence imposssible
-            # warnings.warn("Reflectance has values not between 0 and 1.")
-            raise ValueError("Second column values should be between 0 and 1")
+        second_col = array[:, 1]
+        if normalized and not (np.all(second_col >= 0) and np.all(second_col <= 1)):
+            warnings.warn("Reflectance has values not between 0 and 1. Clipping.")
+            array[:, 1] = np.clip(array[:, 1], 0, 1)
 
-        self.reflectance = reflectance
+        self.reflectance = array
+        self.normalized = normalized
 
+        for key, value in kwargs.items():
+            if key in self.__dict__.keys():
+                setattr(self, key, value)
+            else:
+                raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{key}'")
+
+    """Converts Spectra to the SpectralDistribution object from Colour library."""
     def to_colour(self) -> SpectralDistribution:
         return SpectralDistribution(data=self.data(), domain=self.wavelengths())
 
@@ -56,9 +63,10 @@ class Spectra:
     def to_hex(self, illuminant: Optional["Spectra"] = None):
         return notation.RGB_to_HEX(np.clip(self.to_rgb(illuminant), 0, 1))
 
-    def plot(self, name="spectra", color=None, ax=None, alpha=1.0):
-        if color is None:
+    def plot(self, name=None, color=None, ax=None, alpha=1.0):
+        if color is None and name is None:
             color = self.to_rgb()
+            name = self.__class__.__name__
         if not ax:
             plt.plot(self.reflectance[:, 0], self.reflectance[:, 1], label=name, color=color, alpha=alpha)
         else:
@@ -71,18 +79,21 @@ class Spectra:
         for wavelength in wavelengths:
             d = self.interpolated_value(wavelength)
             interpolated_data.append(d)
-        return Spectra(wavelengths=wavelengths, data=np.array(interpolated_data))
-
+        attrs = self.__dict__.copy()
+        attrs["data"] = np.array(interpolated_data)
+        return self.__class__(**attrs)
 
     def interpolated_value(self, wavelength) -> float:
         wavelengths = self.wavelengths()
         idx = np.searchsorted(wavelengths, wavelength)
 
-        if idx == 0 or idx == len(wavelengths):
-            return 0
+        if idx == 0:
+            return float(self.reflectance[0, 1])
+        if idx == len(wavelengths):
+            return float(self.reflectance[-1, 1])
 
         if wavelengths[idx] == wavelength:
-            return self.reflectance[idx, 1]
+            return float(self.reflectance[idx, 1])
 
         # Linearly interpolate between the nearest wavelengths
         x1, y1 = wavelengths[idx - 1], self.reflectance[idx - 1, 1]
@@ -98,38 +109,69 @@ class Spectra:
 
     def __add__(self, other: Union['Spectra', float, int]) -> 'Spectra':
         # todo: can add ndarray support
+        # todo: can add wavelength interpolation
+        attrs = self.__dict__.copy()
         if isinstance(other, float) or isinstance(other, int):
-            return Spectra(wavelengths=self.wavelengths(), data=self.data() + other)
+            attrs["data"] = self.data() + other
+        elif isinstance(other, Spectra):
+            if not np.array_equal(other.wavelengths(), self.wavelengths()):
+                raise ValueError(f"Wavelengths must match for addition.")
+            attrs["data"] = self.data() + other.data()
+        else:
+            raise TypeError("This addition not supported.")
 
-        if not np.array_equal(other.wavelengths(), self.wavelengths()):
-            raise TypeError(f"Interpolation not supported for addition.")
-        # todo: can add interpolation
-
-        return Spectra(wavelengths=self.wavelengths(), data=self.data() + other.data())
+        return self.__class__(**attrs)
 
     def __mul__(self, scalar: Union[int, float]):
-        return Spectra(wavelengths=self.wavelengths(), data=scalar * self.data())
+        attrs = self.__dict__.copy()
+        attrs["data"] = scalar * self.data()
+        return self.__class__(**attrs)
 
     def __rmul__(self, scalar: Union[int, float]):
         # This method allows scalar * Spectra to work
         return self.__mul__(scalar)
 
+    def __rpow__(self, base: float):
+        attrs = self.__dict__.copy()
+        attrs["data"] = np.power(base, self.data())
+        return self.__class__(**attrs)
+
     def __pow__(self, exponent: float):
-        new_data = np.power(self.data(), exponent)
-        return Spectra(wavelengths=self.wavelengths(), data=new_data)
+        attrs = self.__dict__.copy()
+        attrs["data"] = np.power(self.data(), exponent)
+        return self.__class__(**attrs)
+
+    def __truediv__(self, other: Union["Spectra", float, int]):
+        attrs = self.__dict__.copy()
+        if isinstance(other, (int, float)):
+            attrs["data"] = self.data() / other
+        elif isinstance(other, Spectra):
+            if not np.array_equal(other.wavelengths(), self.wavelengths()):
+                raise ValueError("Wavelengths must match for division")
+            denom = np.clip(other.data(), 1e-7, None)
+            attrs["data"] = self.data() / denom
+        return self.__class__(**attrs)
+
+    """Normalize operator, overwriting invert ~ operator."""
+    def __invert__(self):
+        # Division by maximum element
+        attrs = self.__dict__.copy()
+        attrs["data"] = self.data() / np.max(self.data())
+        attrs["normalized"] = True
+        return self.__class__(**attrs)
 
     def __str__(self):
+        # TODO: can be smarter
         return str(self.reflectance)
 
 
 class Illuminant(Spectra):
-    def __init__(self, reflectance: Optional[Union[Spectra, npt.NDArray]] = None,
-                 wavelengths: Optional[npt.NDArray] = None,
-                 data: Optional[npt.NDArray] = None):
-        if isinstance(reflectance, Spectra):
-            super().__init__(reflectance.reflectance)
+    def __init__(self, array: Optional[Union[Spectra, npt.NDArray]] = None,
+                 wavelengths: Optional[npt.NDArray] = None, data: Optional[npt.NDArray] = None, **kwargs):
+        if isinstance(array, Spectra):
+            super().__init__(**array.__dict__, **kwargs)
         else:
-            super().__init__(reflectance=reflectance, wavelengths=wavelengths, data=data)
+            super().__init__(array=array, wavelengths=wavelengths, data=data, **kwargs)
 
     @staticmethod
     def get(name):

@@ -21,7 +21,7 @@ from .observer import Observer
 
 
 class Pigment(Spectra):
-    def __init__(self, reflectance: Optional[Union[Spectra, npt.NDArray]] = None,
+    def __init__(self, array: Optional[Union[Spectra, npt.NDArray]] = None,
                  k: Optional[npt.NDArray] = None,
                  s: Optional[npt.NDArray] = None,
                  wavelengths: Optional[npt.NDArray] = None):
@@ -31,12 +31,12 @@ class Pigment(Spectra):
 
         k and s are stored as spectra rather than NDArrays.
         """
-        if reflectance is not None:
+        if array is not None:
             # compute k & s from reflectance
-            if isinstance(reflectance, Spectra):
-                super().__init__(reflectance.reflectance)
+            if isinstance(array, Spectra):
+                super().__init__(array.reflectance)
             else:
-                super().__init__(reflectance)
+                super().__init__(array)
             _k, _s = self.compute_k_s()
             self.k, self.s = _k, _s
 
@@ -156,7 +156,7 @@ def k_s_from_pigments(pigments):
 
     for pigment in pigments:
         if not isinstance(pigment, Pigment):
-            pigment = Pigment(reflectance=pigment)
+            pigment = Pigment(array=pigment)
         k, s = pigment.get_k_s()
         k_list.append(k)
         s_list.append(s)

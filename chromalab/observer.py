@@ -14,70 +14,72 @@ def gaussian(x, A, mu, sigma):
     return A * np.exp(-(x - mu) ** 2 / (2 * sigma ** 2))
 
 
-def neitz_cone(wavelengths, lambda_max=559, OD=0.30, output='alog'):
-    wavelengths = wavelengths.astype(np.float32)
+def BaylorNomogram(wls, lambdaMax: int):
+    """
+    Baylor, Nunn, and Schnapf, 1987.
+    """
+    # These are the coefficients for the polynomial approximation.
+    aN = np.array([-5.2734, -87.403, 1228.4, -3346.3, -5070.3, 30881, -31607])
 
-    A = 0.417050601
-    B = 0.002072146
-    C = 0.000163888
-    D = -1.922880605
-    E = -16.05774461
-    F = 0.001575426
-    G = 5.11376e-05
-    H = 0.00157981
-    I = 6.58428e-05
-    J = 6.68402e-05
-    K = 0.002310442
-    L = 7.31313e-05
-    M = 1.86269e-05
-    N = 0.002008124
-    O = 5.40717e-05
-    P = 5.14736e-06
-    Q = 0.001455413
-    R = 4.217640000e-05
-    S = 4.800000000e-06
-    T = 0.001809022
-    U = 3.86677000e-05
-    V = 2.99000000e-05
-    W = 0.001757315
-    X = 1.47344000e-05
-    Y = 1.51000000e-05
-    Z = OD + 0.00000001
+    wlsum = wls / 1000.0
+    wlsVec = np.log10((1.0 / wlsum) * lambdaMax / 561)
+    logS = aN[0] + aN[1] * wlsVec + aN[2] * wlsVec ** 2 + aN[3] * wlsVec ** 3 + \
+           aN[4] * wlsVec ** 4 + aN[5] * wlsVec ** 5 + aN[6] * wlsVec ** 6
+    T = 10 ** logS
+    return Cone(data=T.T, wavelengths=wls, quantal=True)
 
-    A2 = (np.log10(1.00000000 / lambda_max) - np.log10(1.00000000 / 558.5))
-    vector = np.log10(np.reciprocal(wavelengths))
-    const = 1 / np.sqrt(2 * np.pi)
 
-    ex_temp1 = np.log10(-E + E * np.tanh(-((10 ** (vector - A2)) - F) / G)) + D
-    ex_temp2 = A * np.tanh(-(((10 ** (vector - A2))) - B) / C)
-    ex_temp3 = -(J / I * (const * np.exp(-0.5 * (((10 ** (vector - A2)) - H) / I) ** 2)))
-    ex_temp4 = -(M / L * (const * np.exp(-0.5 * (((10 ** (vector - A2)) - K) / L) ** 2)))
-    ex_temp5 = -(P / O * (const * np.exp(-0.5 * (((10 ** (vector - A2)) - N) / O) ** 2)))
-    ex_temp6 = (S / R * (const * np.exp(-0.5 * (((10 ** (vector - A2)) - Q) / R) ** 2)))
-    ex_temp7 = ((V / U * (const * np.exp(-0.5 * (((10 ** (vector - A2)) - T) / U) ** 2))) / 10)
-    ex_temp8 = ((Y / X * (const * np.exp(-0.5 * (((10 ** (vector - A2)) - W) / X) ** 2))) / 100)
-    ex_temp = ex_temp1 + ex_temp2 + ex_temp3 + ex_temp4 + ex_temp5 + ex_temp6 + ex_temp7 + ex_temp8
+def GovardovskiiNomogram(S, lambdaMax):
+    """
+    Victor I. Govardovskii et al., 2000,
+    """
+    # Valid range of wavelength for A1-based visual pigments
+    Lmin, Lmax = 330, 700
 
-    OD_temp = np.log10((1 - 10 ** -((10 ** ex_temp) * Z)) / (1 - 10 ** -Z))
+    # Valid range of lambdaMax value
+    lmaxLow, lmaxHigh = 350, 600
 
-    if output == 'log':
-        extinction = ex_temp
-        with_OD = OD_temp
+    # Alpha-band parameters
+    A, B, C = 69.7, 28, -14.9
+    D = 0.674
+    b, c = 0.922, 1.104
+
+    # Beta-band parameters
+    Abeta = 0.26
+
+    # Assuming S is directly the wavelengths array
+    wls = np.array(S)
+
+    nWls = len(wls)
+    T_absorbance = np.zeros((1, nWls))  # nT is assumed to be 1 based on user note
+
+    if lmaxLow < lambdaMax < lmaxHigh:
+        # alpha-band polynomial
+        a = 0.8795 + 0.0459 * np.exp(-(lambdaMax - 300) ** 2 / 11940)
+
+        x = lambdaMax / wls
+        midStep1 = np.exp(np.array([A, B, C]) * np.array([a, b, c]) - x[:, None] * np.array([A, B, C]))
+        midStep2 = np.sum(midStep1, axis=1) + D
+
+        S_x = 1 / midStep2
+
+        # Beta-band polynomial
+        bbeta = -40.5 + 0.195 * lambdaMax
+        lambdaMaxbeta = 189 + 0.315 * lambdaMax
+
+        midStep1 = -((wls - lambdaMaxbeta) / bbeta) ** 2
+        S_beta = Abeta * np.exp(midStep1)
+
+        # alpha band and beta band together
+        T_absorbance[0, :] = S_x + S_beta
+
+        # Zero sensitivity outside valid range
+        T_absorbance[0, wls < Lmin] = 0
+        T_absorbance[0, wls > Lmax] = 0
     else:
-        extinction = 10 ** ex_temp
-        with_OD = 10 ** OD_temp
+        raise ValueError(f'Lambda Max {lambdaMax} not in range of nomogram')
 
-    return with_OD, extinction
-
-
-# class Photopigment(Spectra):
-#     templates = {
-#         "Neitz":
-#     }
-#
-#     def __init__(self, template: string, peak: Union[int, string]):
-
-
+    return Cone(data=np.clip(T_absorbance.T, 0, 1), wavelengths=wls, quantal=True)
 
 
 class Cone(Spectra):
@@ -85,51 +87,45 @@ class Cone(Spectra):
     with resources.path("chromalab.cones", "ss2deg_10lin.csv") as data_path:
         cone_data = pd.read_csv(data_path, header=None).iloc[:-130, :]
 
-    def __init__(self, reflectance: Optional[Union[Spectra, npt.NDArray]] = None,
-                 wavelengths: Optional[npt.NDArray] = None,
-                 data: Optional[npt.NDArray] = None):
-        if isinstance(reflectance, Spectra):
-            super().__init__(reflectance.reflectance)
+    def __init__(self, array: Optional[Union[Spectra, npt.NDArray]] = None,
+                 wavelengths: Optional[npt.NDArray] = None, data: Optional[npt.NDArray] = None,
+                 quantal=False, **kwargs):
+        self.quantal = quantal
+        if isinstance(array, Spectra):
+            super().__init__(**array.__dict__, **kwargs)
         else:
-            super().__init__(reflectance=reflectance, wavelengths=wavelengths, data=data)
+            super().__init__(array=array, wavelengths=wavelengths, data=data, **kwargs)
 
     def observe(self, spectra: Spectra, illuminant: Spectra):
         return np.divide(np.dot(self.data(), spectra.data()), np.dot(self.data(), illuminant.data()))
 
-    @staticmethod
-    def neitz_l(wavelengths=None):
-        if wavelengths is None:
-            wavelengths = np.arange(390, 701, 1)
+    def as_quantal(self):
+        if self.quantal:
+            return self
+        log_data = np.log(self.data()) - np.log(self.wavelengths())
+        quantal_data = np.exp(log_data - np.max(log_data))
+        attrs = self.__dict__.copy()
+        attrs["data"] = quantal_data
+        attrs["quantal"] = True
+        return self.__class__(**attrs)
 
-        data = np.clip(neitz_cone(wavelengths, lambda_max=559, OD=0.35, output="alog")[1], 0, 1)
-        return Cone(wavelengths=wavelengths, data=data)
+    def as_energy(self):
+        if not self.quantal:
+            return self
+        log_data = np.log(self.wavelengths()) + np.log(self.data())
+        energy_data = np.exp(log_data - np.max(log_data))
+        attrs = self.__dict__.copy()
+        attrs["data"] = energy_data
+        attrs["quantal"] = False
+        return self.__class__(**attrs)
 
-    @staticmethod
-    def neitz_q(wavelengths=None):
-        if wavelengths is None:
-            wavelengths = np.arange(390, 701, 1)
-
-        data = np.clip(neitz_cone(wavelengths, lambda_max=545, OD=0.285, output="alog")[1], 0, 1)
-        return Cone(wavelengths=wavelengths, data=data)
-
-
-    @staticmethod
-    def neitz_m(wavelengths=None):
-        if wavelengths is None:
-            wavelengths = np.arange(390, 701, 1)
-
-        data = np.clip(neitz_cone(wavelengths, lambda_max=530, OD=0.22, output="alog")[1], 0, 1)
-        return Cone(wavelengths=wavelengths, data=data)
-
-
-    @staticmethod
-    def neitz_s(wavelengths=None):
-        if wavelengths is None:
-            wavelengths = np.arange(390, 701, 1)
-
-        data = np.clip(neitz_cone(wavelengths, lambda_max=419, OD=0.35, output="alog")[1], 0, 1)
-        return Cone(wavelengths=wavelengths, data=data)
-
+    def with_od(self, od):
+        if not self.quantal:
+            return self.as_quantal().with_od(od).as_energy()
+        od_data = np.divide(1 - np.exp(np.log(10) * -od * self.data()), 1 - (10 ** -od))
+        attrs = self.__dict__.copy()
+        attrs["data"] = od_data
+        return self.__class__(**attrs)
 
     @staticmethod
     def l_cone(wavelengths=None):
@@ -142,7 +138,7 @@ class Cone(Spectra):
         l_cone = Cone.l_cone()
         r = [(w, 1e-4) for w in l_cone.wavelengths() if w < l_cone.wavelengths()[0] + shift] + \
             [(w + shift, v) for (w, v) in l_cone.reflectance if w + shift <= l_cone.wavelengths()[-1]]
-        return Cone(reflectance=np.array(r)).interpolate_values(wavelengths)
+        return Cone(array=np.array(r)).interpolate_values(wavelengths)
 
     @staticmethod
     def q_cone(wavelengths=None):
