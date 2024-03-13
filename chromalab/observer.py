@@ -1,3 +1,4 @@
+from importlib import resources
 from itertools import combinations
 from typing import List, Union, Optional
 
@@ -5,81 +6,7 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
-from importlib import resources
-
 from .spectra import Spectra
-
-
-def gaussian(x, A, mu, sigma):
-    return A * np.exp(-(x - mu) ** 2 / (2 * sigma ** 2))
-
-
-def BaylorNomogram(wls, lambdaMax: int):
-    """
-    Baylor, Nunn, and Schnapf, 1987.
-    """
-    # These are the coefficients for the polynomial approximation.
-    aN = np.array([-5.2734, -87.403, 1228.4, -3346.3, -5070.3, 30881, -31607])
-
-    wlsum = wls / 1000.0
-    wlsVec = np.log10((1.0 / wlsum) * lambdaMax / 561)
-    logS = aN[0] + aN[1] * wlsVec + aN[2] * wlsVec ** 2 + aN[3] * wlsVec ** 3 + \
-           aN[4] * wlsVec ** 4 + aN[5] * wlsVec ** 5 + aN[6] * wlsVec ** 6
-    T = 10 ** logS
-    return Cone(data=T.T, wavelengths=wls, quantal=True)
-
-
-def GovardovskiiNomogram(S, lambdaMax):
-    """
-    Victor I. Govardovskii et al., 2000,
-    """
-    # Valid range of wavelength for A1-based visual pigments
-    Lmin, Lmax = 330, 700
-
-    # Valid range of lambdaMax value
-    lmaxLow, lmaxHigh = 350, 600
-
-    # Alpha-band parameters
-    A, B, C = 69.7, 28, -14.9
-    D = 0.674
-    b, c = 0.922, 1.104
-
-    # Beta-band parameters
-    Abeta = 0.26
-
-    # Assuming S is directly the wavelengths array
-    wls = np.array(S)
-
-    nWls = len(wls)
-    T_absorbance = np.zeros((1, nWls))  # nT is assumed to be 1 based on user note
-
-    if lmaxLow < lambdaMax < lmaxHigh:
-        # alpha-band polynomial
-        a = 0.8795 + 0.0459 * np.exp(-(lambdaMax - 300) ** 2 / 11940)
-
-        x = lambdaMax / wls
-        midStep1 = np.exp(np.array([A, B, C]) * np.array([a, b, c]) - x[:, None] * np.array([A, B, C]))
-        midStep2 = np.sum(midStep1, axis=1) + D
-
-        S_x = 1 / midStep2
-
-        # Beta-band polynomial
-        bbeta = -40.5 + 0.195 * lambdaMax
-        lambdaMaxbeta = 189 + 0.315 * lambdaMax
-
-        midStep1 = -((wls - lambdaMaxbeta) / bbeta) ** 2
-        S_beta = Abeta * np.exp(midStep1)
-
-        # alpha band and beta band together
-        T_absorbance[0, :] = S_x + S_beta
-
-        # Zero sensitivity outside valid range
-        T_absorbance[0, wls < Lmin] = 0
-        T_absorbance[0, wls > Lmax] = 0
-    else:
-        raise ValueError(f'Lambda Max {lambdaMax} not in range of nomogram')
-
-    return Cone(data=np.clip(T_absorbance.T, 0, 1), wavelengths=wls, quantal=True)
 
 
 class Cone(Spectra):
@@ -97,12 +24,12 @@ class Cone(Spectra):
             super().__init__(array=array, wavelengths=wavelengths, data=data, **kwargs)
 
     def observe(self, spectra: Spectra, illuminant: Spectra):
-        return np.divide(np.dot(self.data(), spectra.data()), np.dot(self.data(), illuminant.data()))
+        return np.divide(np.dot(self.data, spectra.data), np.dot(self.data, illuminant.data))
 
     def as_quantal(self):
         if self.quantal:
             return self
-        log_data = np.log(self.data()) - np.log(self.wavelengths())
+        log_data = np.log(self.data) - np.log(self.wavelengths)
         quantal_data = np.exp(log_data - np.max(log_data))
         attrs = self.__dict__.copy()
         attrs["data"] = quantal_data
@@ -112,8 +39,9 @@ class Cone(Spectra):
     def as_energy(self):
         if not self.quantal:
             return self
-        log_data = np.log(self.wavelengths()) + np.log(self.data())
+        log_data = np.log(self.wavelengths) + np.log(self.data)
         energy_data = np.exp(log_data - np.max(log_data))
+
         attrs = self.__dict__.copy()
         attrs["data"] = energy_data
         attrs["quantal"] = False
@@ -122,22 +50,33 @@ class Cone(Spectra):
     def with_od(self, od):
         if not self.quantal:
             return self.as_quantal().with_od(od).as_energy()
-        od_data = np.divide(1 - np.exp(np.log(10) * -od * self.data()), 1 - (10 ** -od))
+        od_data = np.divide(1 - np.exp(np.log(10) * -od * self.data), 1 - (10 ** -od))
         attrs = self.__dict__.copy()
         attrs["data"] = od_data
         return self.__class__(**attrs)
 
+    def with_preceptoral(self, od=0.35, lens=None, macular=None):
+        if not self.quantal:
+            return self.as_quantal().with_preceptoral(od, lens, macular)
+        if lens is None:
+            lens = load_csv("lensss_1.csv").interpolate_values(self.wavelengths)
+        if macular is None:
+            macular = load_csv("macss_1.csv").interpolate_values(self.wavelengths)
+        denom = (10 ** (lens + macular))
+        C_r = self.with_od(od)
+        return (~(C_r / denom)).as_energy()
+
     @staticmethod
     def l_cone(wavelengths=None):
-        reflectances = Cone.cone_data.iloc[:, [0,1]].to_numpy()
+        reflectances = Cone.cone_data.iloc[:, [0, 1]].to_numpy()
         return Cone(reflectances).interpolate_values(wavelengths)
 
     @staticmethod
     def shift_cone(shift, wavelengths=None):
         # todo: i think this is only works with 1nm stepsize wavelengths lmao
         l_cone = Cone.l_cone()
-        r = [(w, 1e-4) for w in l_cone.wavelengths() if w < l_cone.wavelengths()[0] + shift] + \
-            [(w + shift, v) for (w, v) in l_cone.reflectance if w + shift <= l_cone.wavelengths()[-1]]
+        r = [(w, 1e-4) for w in l_cone.wavelengths if w < l_cone.wavelengths[0] + shift] + \
+            [(w + shift, v) for (w, v) in l_cone.array() if w + shift <= l_cone.wavelengths[-1]]
         return Cone(array=np.array(r)).interpolate_values(wavelengths)
 
     @staticmethod
@@ -146,12 +85,12 @@ class Cone(Spectra):
 
     @staticmethod
     def m_cone(wavelengths=None):
-        reflectances = Cone.cone_data.iloc[:, [0,2]].to_numpy()
+        reflectances = Cone.cone_data.iloc[:, [0, 2]].to_numpy()
         return Cone(reflectances).interpolate_values(wavelengths)
 
     @staticmethod
     def s_cone(wavelengths=None):
-        reflectances = Cone.cone_data.iloc[:, [0,3]].dropna().to_numpy()
+        reflectances = Cone.cone_data.iloc[:, [0, 3]].dropna().to_numpy()
         return Cone(reflectances).interpolate_values(wavelengths)
 
 
@@ -163,7 +102,7 @@ def get_m_transitions(m, wavelengths, both_types=True):
             arr[index:] = 1 - arr[index]
         all_transitions.append(arr)
         if both_types:
-            all_transitions.append(1-arr)
+            all_transitions.append(1 - arr)
 
     return all_transitions
 
@@ -178,7 +117,7 @@ class Observer:
 
         self.sensor_matrix = self.get_sensor_matrix(total_wavelengths)
         if illuminant is not None:
-            illuminant = illuminant.interpolate_values(self.wavelengths).data()
+            illuminant = illuminant.interpolate_values(self.wavelengths).data
         else:
             illuminant = np.ones_like(self.wavelengths)
 
@@ -240,7 +179,7 @@ class Observer:
         """
         if isinstance(data, Spectra):
             if np.array_equal(data.wavelengths(), self.wavelengths):
-                data = data.data()
+                data = data.data
             else:
                 # have to interpolate
                 interp_color = []
@@ -257,8 +196,6 @@ class Observer:
 
     def dist(self, color1: Union[npt.NDArray, Spectra], color2: Union[npt.NDArray, Spectra]):
         return np.linalg.norm(self.observe(color1) - self.observe(color2))
-
-
 
     def get_transitions(self) -> List[npt.NDArray]:
         transitions = []
@@ -291,3 +228,8 @@ class Observer:
 
         colors = np.matmul(self.sensor_matrix, transitions_matrix)
         return np.divide(colors, self.whitepoint.reshape((-1, 1)))
+
+
+def load_csv(name) -> Spectra:
+    with resources.path("chromalab.cones", name) as data_path:
+        return Cone(np.array(pd.read_csv(data_path, header=None)), normalized=False)

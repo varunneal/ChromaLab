@@ -21,6 +21,7 @@ from .observer import Observer
 
 
 class Pigment(Spectra):
+    # TODO: reformat with kwargs
     def __init__(self, array: Optional[Union[Spectra, npt.NDArray]] = None,
                  k: Optional[npt.NDArray] = None,
                  s: Optional[npt.NDArray] = None,
@@ -34,7 +35,7 @@ class Pigment(Spectra):
         if array is not None:
             # compute k & s from reflectance
             if isinstance(array, Spectra):
-                super().__init__(array.reflectance)
+                super().__init__(array.array())
             else:
                 super().__init__(array)
             _k, _s = self.compute_k_s()
