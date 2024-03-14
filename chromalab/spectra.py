@@ -104,7 +104,6 @@ class Spectra:
 
         return y1 + (y2 - y1) * (wavelength - x1) / (x2 - x1)
 
-
     def __add__(self, other: Union['Spectra', float, int]) -> 'Spectra':
         # todo: can add ndarray support
         # todo: can add wavelength interpolation
@@ -119,6 +118,15 @@ class Spectra:
         else:
             raise TypeError("This addition not supported.")
 
+        return self.__class__(**attrs)
+
+    def __rsub__(self, other: Union[float, int]) -> 'Spectra':
+        attrs = self.__dict__.copy()
+
+        if isinstance(other, (float, int)):
+            attrs["data"] = other - self.data
+        else:
+            raise TypeError("This subtraction not supported from the left side with a non-numeric type.")
 
         return self.__class__(**attrs)
 
@@ -153,7 +161,6 @@ class Spectra:
         return self.__class__(**attrs)
 
     """Normalize operator, overwriting invert ~ operator."""
-
     def __invert__(self):
         # Division by maximum element
         attrs = self.__dict__.copy()

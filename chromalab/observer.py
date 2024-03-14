@@ -10,7 +10,6 @@ from .spectra import Spectra
 
 
 class Cone(Spectra):
-    # TODO: refactor after analysis
     with resources.path("chromalab.cones", "ss2deg_10lin.csv") as data_path:
         cone_data = pd.read_csv(data_path, header=None).iloc[:-130, :]
 
