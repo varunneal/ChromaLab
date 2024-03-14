@@ -7,11 +7,25 @@ import numpy.typing as npt
 import pandas as pd
 
 from .spectra import Spectra
+from .nomograms import NeitzNomogram, StockmanSharpeNomogram, BaylorNomogram, GovardovskiiNomogram, LambNomogram
 
+
+def load_csv(name) -> Spectra:
+    with resources.path("chromalab.cones", name) as data_path:
+        return Spectra(np.array(pd.read_csv(data_path, header=None)), normalized=False)
 
 class Cone(Spectra):
     with resources.path("chromalab.cones", "ss2deg_10lin.csv") as data_path:
-        cone_data = pd.read_csv(data_path, header=None).iloc[:-130, :]
+        ss_data = pd.read_csv(data_path, header=None).iloc[:-130, :]
+    lens_absorption = load_csv("lensss_1.csv")
+    macular_absorption = load_csv("macss_1.csv")
+    templates = {
+        "neitz": NeitzNomogram,
+        "stockman": StockmanSharpeNomogram,
+        "baylor": BaylorNomogram,
+        "govardovskii": GovardovskiiNomogram,
+        "lamb": LambNomogram
+    }
 
     def __init__(self, array: Optional[Union[Spectra, npt.NDArray]] = None,
                  wavelengths: Optional[npt.NDArray] = None, data: Optional[npt.NDArray] = None,
@@ -54,43 +68,56 @@ class Cone(Spectra):
         attrs["data"] = od_data
         return self.__class__(**attrs)
 
-    def with_preceptoral(self, od=0.35, lens=None, macular=None):
+    def with_preceptoral(self, od=0.35, lens=1, macular=1):
+        # There are other lens and macular pigment data sources,
+        # which can be found in the cones/ subfolder.
         if not self.quantal:
             return self.as_quantal().with_preceptoral(od, lens, macular)
-        if lens is None:
-            lens = load_csv("lensss_1.csv").interpolate_values(self.wavelengths)
-        if macular is None:
-            macular = load_csv("macss_1.csv").interpolate_values(self.wavelengths)
-        denom = (10 ** (lens + macular))
+        lens_spectra = lens * Cone.lens_absorption.interpolate_values(self.wavelengths)
+        macular_spectra = macular * Cone.macular_absorption.interpolate_values(self.wavelengths)
+        denom = (10 ** (lens_spectra + macular_spectra))
         C_r = self.with_od(od)
         return (~(C_r / denom)).as_energy()
 
     @staticmethod
-    def l_cone(wavelengths=None):
-        reflectances = Cone.cone_data.iloc[:, [0, 1]].to_numpy()
-        return Cone(reflectances).interpolate_values(wavelengths)
+    def cone(peak, template="govardovskii", od=0.35, wavelengths=None):
+        # TODO: support L, M, S, Q peak, besides numerical
+        # TODO: want to add eccentricity and/or macular, lens control
+        if not isinstance(peak, (int, float)):
+            raise ValueError("Currently only numerical peaks are supported.")
+        if wavelengths is None:
+            wavelengths = np.arange(400, 701, 1)
+        if template not in Cone.templates:
+            raise ValueError(f"Choose a template from {Cone.templates.keys()}")
+        return Cone.templates[template](wavelengths, peak).with_preceptoral(od=od)
 
     @staticmethod
-    def shift_cone(shift, wavelengths=None):
-        # todo: i think this is only works with 1nm stepsize wavelengths lmao
-        l_cone = Cone.l_cone()
-        r = [(w, 1e-4) for w in l_cone.wavelengths if w < l_cone.wavelengths[0] + shift] + \
-            [(w + shift, v) for (w, v) in l_cone.array() if w + shift <= l_cone.wavelengths[-1]]
-        return Cone(array=np.array(r)).interpolate_values(wavelengths)
+    def l_cone(wavelengths=None, template=None):
+        if template is None:
+            reflectances = Cone.ss_data.iloc[:, [0, 1]].to_numpy()
+            return Cone(reflectances).interpolate_values(wavelengths)
+        return Cone.cone(559, template=template, od=0.35, wavelengths=wavelengths)
 
     @staticmethod
-    def q_cone(wavelengths=None):
-        return Cone.shift_cone(-15, wavelengths=wavelengths)
+    def m_cone(wavelengths=None, template=None):
+        if template is None:
+            reflectances = Cone.ss_data.iloc[:, [0, 2]].to_numpy()
+            return Cone(reflectances).interpolate_values(wavelengths)
+        return Cone.cone(530, template=template, od=0.35, wavelengths=wavelengths)
+
 
     @staticmethod
-    def m_cone(wavelengths=None):
-        reflectances = Cone.cone_data.iloc[:, [0, 2]].to_numpy()
-        return Cone(reflectances).interpolate_values(wavelengths)
+    def s_cone(wavelengths=None, template=None):
+        if template is None:
+            reflectances = Cone.ss_data.iloc[:, [0, 3]].dropna().to_numpy()
+            return Cone(reflectances).interpolate_values(wavelengths)
+        # http://www.cvrl.org/database/text/intros/introod.htm
+        # "There are no good estimates of pigment optical densities for the S-cones."
+        return Cone.cone(419, template=template, od=0.5, wavelengths=wavelengths)
 
     @staticmethod
-    def s_cone(wavelengths=None):
-        reflectances = Cone.cone_data.iloc[:, [0, 3]].dropna().to_numpy()
-        return Cone(reflectances).interpolate_values(wavelengths)
+    def q_cone(wavelengths=None, template="govardovskii"):
+        return Cone.cone(547, template=template, od=0.35, wavelengths=wavelengths)
 
 
 def get_m_transitions(m, wavelengths, both_types=True):
@@ -228,7 +255,3 @@ class Observer:
         colors = np.matmul(self.sensor_matrix, transitions_matrix)
         return np.divide(colors, self.whitepoint.reshape((-1, 1)))
 
-
-def load_csv(name) -> Spectra:
-    with resources.path("chromalab.cones", name) as data_path:
-        return Cone(np.array(pd.read_csv(data_path, header=None)), normalized=False)

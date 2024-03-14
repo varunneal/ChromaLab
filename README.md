@@ -1,4 +1,4 @@
-Install via:
+**Install via:**
 
 ```
 pip install git+https://github.com/VarunNSrivastava/ChromaLab
@@ -22,6 +22,8 @@ red = Spectra(wavelengths=wavelengths, data=data)
 print(red.to_rgb())
 ```
 
+To get the underlying numpy data, you can call `.array()`, or access `.data` and `.wavelengths` directly. 
+Use the `interpolate_values(wavelengths)` method to interpolate your `Spectra` over any set of wavelengths.
 If you want to pass in data outside 0 and 1 make sure to set `normalized` to `false`.
 
 This library implements `Cone`, `Pigment`, and `Illuminant` as extensions of `Spectra`,
@@ -36,15 +38,14 @@ from chromalab.observer import Cone, Observer
 import matplotlib.pyplot as plt
 import numpy as np
 
-wavelengths = np.arange(400, 701, 1)  # set any wavelengths you want
 
-Cone.s_cone(wavelengths).plot()
-Cone.m_cone(wavelengths).plot()
-Cone.l_cone(wavelengths).plot()
+Cone.s_cone().plot()
+Cone.m_cone().plot()
+Cone.l_cone().plot()
 
 plt.show()
-
 ```
+
 
 From nomogram:
 
@@ -59,8 +60,10 @@ for template in ["neitz", "govardovskii"]:
     Cone.m_cone(wavelengths, template=template).plot()
 
 plt.show()
-
 ```
+
+There is also the `cone` method where you can specify a peak directly, e.g. ``Cone.cone(530)``. You can also specify the
+nomogram template, optical density, wavelengths, etc. 
 
 Construct a cone fundamental from scratch:
 
@@ -78,6 +81,25 @@ plt.show()
 The Cone class has a variety of helpful instance methods. It is an extension of the Spectra class. 
 Spectra are easy to plot, convert to RGB, XYZ, and combine in various ways.
 
+**Observers:**
+
+You can use the `Observer` class as a wrapper for a bunch of cones and some `Illuminant`. 
+`Observer`s have helpful methods of being able convert any `Spectra` to their local coordinates.
+You can initialize them by passing in a sequence of Cones, or by loading default observers:
+
+```
+from chromalab.observer import Observer
+from chromalab.spectra import Illuminant
+
+
+standard_trichromat = Observer.trichromat()
+standard_tetrachromat = Observer.tetrachromat()
+
+d65 = Illuminant.get("D65")
+print(trichromat.observe(D65))
+print(tetrachromat.observe(D65))
+```
+
 **Ink mixing:**
 
 - `InkGamut` models the full gamut of a set of ink primaries
@@ -94,7 +116,7 @@ from chromalab.observer import Observer
 from chromalab.inks import InkGamut
 import numpy as np
 
-cmy = # ... load neugebauer primaries dict. For cmy keys will be length 3 binary sequences
+cmy = # ... load neugebauer primaries dict. For CMY, keys will be length 3 binary sequences
 
 wavelengths1 = np.arange(390, 701, 1)
 d65 = Illuminant.get("D65")
@@ -105,6 +127,8 @@ cmy_gamut = InkGamut(cmy, illuminant=d65)
 point_cloud, percentages = cmy_gamut.get_point_cloud(trichromat)
 
 ```
+
+There is also cellular neugebauer support, as well as a variety of methods for finding metamers in an `InkGamut`. 
 
 
 **Plotting**
@@ -151,5 +175,12 @@ Cone.m_cone().plot(name="m cone")
 
 plt.legend()
 plt.show()
-
 ```
+
+**Illuminants**
+
+Access default illuminants by using `Illuminant.get(name)`. A great variety of illuminants are supported,
+accessed via the colour-science python library. For a complete list, check out the following:
+
+- https://colour.readthedocs.io/en/v0.4.3/generated/colour.SDS_ILLUMINANTS.html
+- https://colour.readthedocs.io/en/v0.4.3/generated/colour.SDS_LIGHT_SOURCES.html
