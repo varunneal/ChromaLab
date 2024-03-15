@@ -1,9 +1,10 @@
-from itertools import combinations
+from itertools import combinations, chain
 from typing import List, Union, Optional, Dict
 
 import matplotlib.pyplot as plt
 import numpy as np
 import numpy.typing as npt
+from itertools import product, islice
 
 
 from typing import Tuple, Iterable, List
@@ -199,9 +200,15 @@ def load_neugebauer(inks, paper):
     return Neugebauer(primaries_dict)
 
 
-def observe_spectra(reflectance, observer, illuminant):
-    return np.divide(np.matmul(observer, (reflectance * illuminant).T).squeeze(), np.matmul(observer, illuminant.T))
+def observe_spectra(data, observer, illuminant):
+    return np.divide(np.matmul(observer, (data * illuminant).T).squeeze(), np.matmul(observer, illuminant.T))
 
+
+def observe_spectras(spectras: npt.NDArray, observer: npt.NDArray, illuminant: npt.NDArray) -> npt.NDArray:
+    numerator = np.matmul(observer, (spectras * illuminant).T)
+    denominator = np.matmul(observer, illuminant.T)
+    result = np.divide(numerator, denominator[:, np.newaxis])
+    return result.T
 
 def find_best_n(primaries_dict, percentages: npt.NDArray, actual: Spectra):
     # Find best n array for a particular sample
@@ -277,6 +284,7 @@ class CellNeugebauer:
         return observe_spectra(self.mix(percentages), observer, illuminant)
 
 
+
 class Neugebauer:
     def __init__(self, primaries_dict: Dict[Union[Tuple, str], Spectra], n=50):
         """
@@ -320,6 +328,8 @@ class Neugebauer:
     def observe(self, percentages: npt.NDArray, observer: npt.NDArray, illuminant: Optional[npt.NDArray] = None):
         if illuminant is None:
             illuminant = np.ones_like(self.wavelengths)
+        if percentages.ndim > 1:
+            return observe_spectras(self.batch_mix(percentages), observer, illuminant)
         return observe_spectra(self.mix(percentages), observer, illuminant)
 
 
@@ -359,30 +369,36 @@ class InkGamut:
             data = np.clip(data, 0, 1)
         return Spectra(data=data, wavelengths=self.wavelengths)
 
-    def get_refined_point_cloud(self, observer: Union[Observer, npt.NDArray], p: npt.NDArray, q: npt.NDArray,
-                                stepsize=0.1, refined_stepsize=0.02):
-        p0 = np.maximum(0, p - stepsize)
-        q0 = np.maximum(0, q - stepsize)
+    # def get_refined_point_cloud(self, observer: Union[Observer, npt.NDArray], p: npt.NDArray, q: npt.NDArray,
+    #                             stepsize=0.1, refined_stepsize=0.02):
+    #     p0 = np.maximum(0, p - stepsize)
+    #     q0 = np.maximum(0, q - stepsize)
+    #
+    #     print(f"exploring {p0} to {np.minimum(p + stepsize, 1)} and {q0} to {np.minimum(q + stepsize, 1)}")
+    #
+    #     fine_values = np.array(list(product(np.arange(0, 2 * stepsize + refined_stepsize, refined_stepsize),
+    #                                         repeat=self.neugebauer.num_inks)))
+    #
+    #     # handle in get_point_cloud instead
+    #     # p_grid = np.minimum(p0 + np.array(list(fine_values)), 1)
+    #     # q_grid = np.minimum(q0 + np.array(list(fine_values)), 1)
+    #
+    #     p_point_cloud, p_percentages = self.get_point_cloud(observer,  grid=p_grid)
+    #     q_point_cloud, q_percentages = self.get_point_cloud(observer, grid=q_grid)
+    #
+    #     point_cloud = np.concatenate([p_point_cloud, q_point_cloud], axis=0)
+    #     percentages = np.concatenate([p_percentages, q_percentages], axis=0)
+    #
+    #     return point_cloud, percentages
 
-        print(f"exploring {p0} to {np.minimum(p + stepsize, 1)} and {q0} to {np.minimum(q + stepsize, 1)}")
-
-        fine_values = np.array(list(product(np.arange(0, 2 * stepsize + refined_stepsize, refined_stepsize),
-                                            repeat=self.neugebauer.num_inks)))
-
-        # handle in get_point_cloud instead
-        # p_grid = np.minimum(p0 + np.array(list(fine_values)), 1)
-        # q_grid = np.minimum(q0 + np.array(list(fine_values)), 1)
-
-        p_point_cloud, p_percentages = self.get_point_cloud(observer,  grid=p_grid)
-        q_point_cloud, q_percentages = self.get_point_cloud(observer, grid=q_grid)
-
-        point_cloud = np.concatenate([p_point_cloud, q_point_cloud], axis=0)
-        percentages = np.concatenate([p_percentages, q_percentages], axis=0)
-
-        return point_cloud, percentages
+    def batch_generator(self, iterable, batch_size=100):
+        """Utility function to generate batches from an iterable."""
+        iterator = iter(iterable)
+        for first in iterator:
+            yield np.array(list(islice(chain([first], iterator), batch_size - 1)))
 
     def get_point_cloud(self, observe: Union[Observer, npt.NDArray],
-                        stepsize=0.1, grid: Optional[npt.NDArray] = None, verbose=True):
+                        stepsize=0.1, grid: Optional[npt.NDArray] = None, verbose=True, batch_size=1e5):
         if isinstance(observe, Observer):
             observe = observe.get_sensor_matrix(wavelengths=self.wavelengths)
 
@@ -390,25 +406,30 @@ class InkGamut:
         _percentages = []
 
         if grid is None:
-            values = np.arange(0, 1 + stepsize, stepsize)  # todo: this is wrong
+            values = np.arange(0, 1 + stepsize, stepsize)
             total_combinations = len(values) ** self.neugebauer.num_inks
             grid = product(values, repeat=self.neugebauer.num_inks)
         else:
             total_combinations = grid.shape[0]
 
         desc = "Generating point cloud"
-        verbose_progress = (lambda x: tqdm(x, total=total_combinations, desc=desc)) if verbose else (lambda x: x)
+        verbose_progress = (lambda x: tqdm(x, total=total_combinations / batch_size, desc=desc)) if verbose else (lambda x: x)
 
-        for percentages in verbose_progress(grid):
-            arr = np.array(percentages)
-            if np.any(arr > 1):
+        for batch in verbose_progress(self.batch_generator(grid, batch_size=int(batch_size))):
+            valid_percentages = batch[np.all(batch <= 1, axis=1)]
+
+            if valid_percentages.size == 0:
                 continue
 
-            stimulus = self.neugebauer.observe(arr, observe, self.illuminant)
-            point_cloud.append(stimulus)
-            _percentages.append(percentages)
+            stimulus_batch = self.neugebauer.observe(valid_percentages, observe, self.illuminant)
+            point_cloud.append(stimulus_batch)
+            _percentages.append(valid_percentages)
 
-        return np.array(point_cloud), np.array(_percentages)
+        # Concatenate the batched results
+        point_cloud = np.concatenate(point_cloud, axis=0)
+        _percentages = np.concatenate(_percentages, axis=0)
+
+        return point_cloud, _percentages
 
     def get_buckets(self, observe: Union[Observer, npt.NDArray],
                   axis=2, stepsize=0.1, verbose=True, save=False, refined=0):
