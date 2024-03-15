@@ -5,8 +5,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import numpy.typing as npt
 
-from scipy.spatial import ConvexHull
-from scipy.spatial.distance import cdist
 
 from typing import Tuple, Iterable, List
 from tqdm import tqdm
@@ -55,7 +53,7 @@ class Pigment(Spectra):
         # Walowit · 1987 specifies this least squares method
         # todo: GJK method as per Centore • 2015
         k, s = [], []
-        for wavelength, r in np.clip(self.reflectance, 1e-4, 1):
+        for wavelength, r in np.clip(self.array(), 1e-4, 1):
             # SK Loyalka · 1995 suggests 4 instead of 2. I find 2 is better.
             k_over_s = (1 - r) * (1 - r) / (2 * r)
             A = np.array([[-1, k_over_s], [1, 1]])
@@ -170,7 +168,7 @@ def k_s_from_pigments(pigments):
 
 def km_mix(pigments, concentrations=None, coefficients=None):
     K_matrix, S_matrix = k_s_from_pigments(pigments)
-    wavelengths = pigments[0].wavelengths()
+    wavelengths = pigments[0].wavelengths
 
     if not concentrations:
         concentrations = np.array([1 / len(pigments)] * len(pigments))
@@ -207,7 +205,7 @@ def observe_spectra(reflectance, observer, illuminant):
 
 def find_best_n(primaries_dict, percentages: npt.NDArray, actual: Spectra):
     # Find best n array for a particular sample
-    wavelengths = actual.wavelengths()
+    wavelengths = actual.wavelengths
 
     best_n = np.ones_like(wavelengths)
     errors = np.ones_like(wavelengths)
@@ -218,7 +216,7 @@ def find_best_n(primaries_dict, percentages: npt.NDArray, actual: Spectra):
     for n in candidates:
         neug_n = Neugebauer(primaries_dict, n=n)
         result = neug_n.mix(percentages).reshape(-1)
-        for i, (a, b) in enumerate(zip(result, actual.data())):
+        for i, (a, b) in enumerate(zip(result, actual.data)):
             error = (b-a) ** 2
 
             if error < errors[i]:
@@ -231,7 +229,6 @@ def find_best_ns(primaries_dict, samples_dict):
     # samples dict will need to be (Tuple, Spectra) pairs
     best_ns = []
 
-    # wavelengths = np.zeros_like(list(primaries_dict.values())[0].wavelengths())
     for percentage, actual in samples_dict.items():
         best_n = find_best_n(primaries_dict, np.array(percentage), actual)
         best_ns.append(best_n)
@@ -257,7 +254,7 @@ class CellNeugebauer:
             spectras.append(spectra)
 
         self.num_inks = int(math.log(len(primaries_dict), 3))
-        self.wavelengths = list(primaries_dict.values())[0].wavelengths()
+        self.wavelengths = list(primaries_dict.values())[0].wavelengths
 
         self.n = n
 
@@ -292,8 +289,8 @@ class Neugebauer:
             if isinstance(key, str):
                 key = tuple(map(lambda x: int(x), key))
             weights.append(np.array(key))
-            spectras.append(spectra.data())
-        self.wavelengths = list(primaries_dict.values())[0].wavelengths()
+            spectras.append(spectra.data)
+        self.wavelengths = list(primaries_dict.values())[0].wavelengths
         self.weights_array = np.array(weights)
         self.spectras_array = np.power(np.array(spectras), 1.0 / n)
         self.num_inks = int(math.log(self.weights_array.shape[0], 2))
@@ -302,6 +299,15 @@ class Neugebauer:
             assert len(n) == len(self.wavelengths)
 
         self.n = n
+
+    def batch_mix(self, percentages: npt.NDArray) -> npt.NDArray:
+        w_p = ((self.weights_array * percentages[:, np.newaxis, :]) +
+               (1 - self.weights_array) * (1 - percentages[:, np.newaxis, :]))
+        w_p_prod = np.prod(w_p, axis=2, keepdims=True)
+
+        result = np.power(np.matmul(w_p_prod.transpose(0, 2, 1), self.spectras_array), self.n).squeeze(axis=1)
+
+        return result
 
     def mix(self, percentages: npt.NDArray) -> npt.NDArray:
         w_p = (self.weights_array * percentages) + (1 - self.weights_array) * (1 - percentages)
@@ -323,12 +329,11 @@ class InkGamut:
         if isinstance(inks, Neugebauer) or isinstance(inks, CellNeugebauer):
             self.wavelengths = inks.wavelengths
         else:
-            self.wavelengths = inks[0].wavelengths()
+            self.wavelengths = inks[0].wavelengths
 
         self.illuminant = None
         if isinstance(illuminant, Spectra):
-            # assert np.array_equal(self.wavelengths, whitepoint.wavelengths())
-            self.illuminant = illuminant.interpolate_values(self.wavelengths).data()
+            self.illuminant = illuminant.interpolate_values(self.wavelengths).data
         elif isinstance(illuminant, np.ndarray):
             assert len(illuminant) == len(self.wavelengths)
             self.illuminant = illuminant
@@ -339,10 +344,10 @@ class InkGamut:
             self.neugebauer = inks
             return
 
-        assert np.array_equal(self.wavelengths, paper.wavelengths())
+        assert np.array_equal(self.wavelengths, paper.wavelengths)
 
         for ink in inks:
-            assert np.array_equal(ink.wavelengths(), self.wavelengths)
+            assert np.array_equal(ink.wavelengths, self.wavelengths)
 
         self.neugebauer = load_neugebauer(inks, paper)  # KM interpolation
 
