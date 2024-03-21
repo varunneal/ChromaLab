@@ -104,6 +104,9 @@ class Spectra:
 
         return y1 + (y2 - y1) * (wavelength - x1) / (x2 - x1)
 
+    def __getitem__(self, wavelength):
+        return self.interpolated_value(wavelength)
+
     def __add__(self, other: Union['Spectra', float, int]) -> 'Spectra':
         # todo: can add ndarray support
         # todo: can add wavelength interpolation

@@ -1,10 +1,11 @@
+import heapq
 from itertools import combinations, chain
 from typing import List, Union, Optional, Dict
 
 import matplotlib.pyplot as plt
 import numpy as np
 import numpy.typing as npt
-from itertools import product, islice
+from itertools import product, islice, combinations
 
 
 from typing import Tuple, Iterable, List
@@ -17,6 +18,8 @@ import math
 from .spectra import Spectra
 from .observer import Observer
 
+from sklearn.decomposition import PCA
+from scipy.special import comb
 
 
 class Pigment(Spectra):
@@ -53,9 +56,9 @@ class Pigment(Spectra):
     def compute_k_s(self) -> Tuple[npt.NDArray, npt.NDArray]:
         # Walowit · 1987 specifies this least squares method
         # todo: GJK method as per Centore • 2015
+        array = np.clip(self.array(), 1e-4, 1)
         k, s = [], []
-        for wavelength, r in np.clip(self.array(), 1e-4, 1):
-            # SK Loyalka · 1995 suggests 4 instead of 2. I find 2 is better.
+        for wavelength, r in array:
             k_over_s = (1 - r) * (1 - r) / (2 * r)
             A = np.array([[-1, k_over_s], [1, 1]])
             b = np.array([0, 1])
@@ -63,16 +66,15 @@ class Pigment(Spectra):
             AtA_inv = np.linalg.inv(np.dot(A.T, A))
             Atb = np.dot(A.T, b)
 
-            _k, _s = np.clip(np.dot(AtA_inv, Atb), 0, 1)
+            _k, _s = np.dot(AtA_inv, Atb)
             k.append(_k)
             s.append(_s)
 
-        return np.array(k), np.array(s)
+        return np.clip(np.array(k), 0, 1), np.clip(np.array(s), 0, 1)
 
     def get_k_s(self) -> Tuple[npt.NDArray, npt.NDArray]:
         # todo: pass in wavelength list for interpolation/sampling consistency with mixing
         return self.k, self.s
-
 
 
 def get_metamers(points, target, threshold=1e-2, axis=2):
@@ -93,21 +95,6 @@ def get_metamers(points, target, threshold=1e-2, axis=2):
     return metamers
 
 
-
-# def bucket_points(points, axis=2):
-#     # overlapping buckets
-#     buckets = defaultdict(list)
-#
-#     for idx, point in enumerate(points):
-#         ranges = [(int(1000 * round(p, 3)) - 5, int(1000 * round(p, 3))) for i, p in enumerate(point) if i != axis]
-#         keys = product(*ranges)
-#
-#         for key in keys:
-#             value = (tuple(point), idx)
-#             buckets[tuple(key)].append(value)
-#
-#     return buckets
-
 def bucket_points(points, axis=2):
     # disjointed buckets
     buckets = defaultdict(list)
@@ -116,12 +103,6 @@ def bucket_points(points, axis=2):
         key = tuple(int(100*round(p,2))for i, p in enumerate(point) if i != axis)
         value = (tuple(point), idx)
         buckets[key].append(value)
-        # ranges = [(int(1000 * round(p, 3)) - 5, int(1000 * round(p, 3))) for i, p in enumerate(point) if i != axis]
-        # keys = product(*ranges)
-        #
-        # for key in keys:
-        #     value = (tuple(point), idx)
-        #     buckets[tuple(key)].append(value)
 
     return buckets
 
@@ -147,37 +128,53 @@ def sort_buckets(buckets, axis=2) -> List:
 
     return sorted(dist_buckets, reverse=True)
 
+
 def max_dist(buckets, axis=2):
     return sort_buckets(buckets, axis=axis)[0]
 
+
+def k_s_from_data(data: npt.NDArray):
+    array = np.clip(data, 1e-4, 1)
+    k, s = [], []
+    k_over_s = (1 - array) ** 2 / (2 * array)
+    b = np.array([0, 1])
+
+    for f in k_over_s:
+        A = np.array([[-1, f], [1, 1]])
+
+        # should just be able to call np.linalg.inverse
+        AtA_inv = np.linalg.inv(np.dot(A.T, A))
+        Atb = np.dot(A.T, b)
+        _k, _s = np.dot(AtA_inv, Atb)
+
+        k.append(_k)
+        s.append(_s)
+
+    return np.clip(np.array(k), 0, 1), np.clip(np.array(s), 0, 1)
+
+
+def data_from_k_s(k, s):
+    return 1 + (k / s) - np.sqrt(np.square(k / s) + (2 * k / s))
+
+
 def k_s_from_pigments(pigments):
-    k_list = []
-    s_list = []
+    k_s_pairs = [k_s_from_data(pigment.data) for pigment in pigments]
+    k_matrix, s_matrix = np.array([k for k, _ in k_s_pairs]), np.array([s for _, s in k_s_pairs])
 
-    for pigment in pigments:
-        if not isinstance(pigment, Pigment):
-            pigment = Pigment(array=pigment)
-        k, s = pigment.get_k_s()
-        k_list.append(k)
-        s_list.append(s)
-
-    k_matrix = np.column_stack(k_list)
-    s_matrix = np.column_stack(s_list)
-
-    return k_matrix, s_matrix
+    return k_matrix.T, s_matrix.T
 
 
-def km_mix(pigments, concentrations=None, coefficients=None):
+def km_mix(pigments, concentrations=None):
     K_matrix, S_matrix = k_s_from_pigments(pigments)
     wavelengths = pigments[0].wavelengths
 
     if not concentrations:
-        concentrations = np.array([1 / len(pigments)] * len(pigments))
+        concentrations = np.ones(len(pigments)) / len(pigments)
 
     K_mix = K_matrix @ concentrations
     S_mix = S_matrix @ concentrations
 
-    return Pigment(k=K_mix, s=S_mix, wavelengths=wavelengths)
+    return Spectra(data=data_from_k_s(K_mix, S_mix), wavelengths=wavelengths)
 
 
 def load_neugebauer(inks, paper):
@@ -243,6 +240,116 @@ def find_best_ns(primaries_dict, samples_dict):
     return best_ns
 
 
+class InkLibrary:
+    def __init__(self, library: Dict[str, Spectra], paper: Spectra):
+        self.names = list(library.keys())
+        spectras = list(library.values())
+        self.wavelengths = spectras[0].wavelengths
+        self.spectras = np.array([s.data for s in spectras])
+        self.K = len(self.names)
+        for s in spectras:
+            assert np.array_equal(s.wavelengths, self.wavelengths)
+        assert np.array_equal(self.wavelengths, paper.wavelengths)
+        self.paper = paper.data
+
+    def cached_pca_search(self, observe: Union[Observer, npt.NDArray],
+                          illuminant: Union[Spectra, npt.NDArray], top=50, k=None):
+        # super efficient way to find best k-ink subset of large K ink library
+        if isinstance(observe, Observer):
+            observe = observe.get_sensor_matrix(self.wavelengths)
+        if isinstance(illuminant, Spectra):
+            illuminant = illuminant.interpolate_values(self.wavelengths).data
+        if k is None:
+            k = observe.shape[0]
+
+        km_cache = {}
+        # Populate cache
+        total_iterations = sum(comb(self.K, i) for i in range(2, k + 1))
+
+        # Create a single tqdm progress bar
+        with tqdm(total=total_iterations, desc="loading km cache") as pbar:
+            for i in range(2, k + 1):
+                concentrations = np.ones(i) / i
+                for subset in combinations(range(self.K), i):
+                    inks_to_mix = self.spectras[list(subset)]
+                    ks_batch = []
+                    for ink in inks_to_mix:
+                        ks_batch.append(np.stack(k_s_from_data(ink)))
+                    ks_batch = np.stack(ks_batch, axis=2)
+                    ks_mix = ks_batch @ concentrations
+                    data = data_from_k_s(ks_mix[0], ks_mix[1])
+                    km_cache[subset] = data.astype(np.float16)
+                    pbar.update(1)
+
+        weights_array = []
+        for i in range(k+1):
+            for subset in combinations(range(k), i):
+                binary = [0] * k
+                for index in subset:
+                    binary[index] = 1
+                weights_array.append(binary)
+        weights_array = np.array(weights_array)
+
+        top_scores = []
+
+        # Find best inkset
+        for inkset_idx in tqdm(combinations(range(self.K), k), total=comb(self.K, k), desc="finding best inkset"):
+            names = [self.names[i] for i in inkset_idx]
+
+            primaries_array = [self.paper]
+            primaries_array.extend([self.spectras[idx] for idx in inkset_idx])
+            primaries_array.extend(
+                [km_cache[subset] for i in range(2, k + 1) for subset in combinations(inkset_idx, i)])
+
+            primaries_array = np.array(primaries_array)
+            neug = FastNeugebauer(weights_array, primaries_array, k)
+            score = neug.get_pca_size(observe, illuminant)
+
+            if len(top_scores) < top:
+                heapq.heappush(top_scores, (score, names))
+            else:
+                if score > top_scores[0][0]:
+                    heapq.heapreplace(top_scores, (score, names))
+
+        return sorted(top_scores, reverse=True)
+
+
+
+class FastNeugebauer:
+    def __init__(self, weights_array, data_array, num_inks):
+        self.weights_array = weights_array
+        self.data_array = np.power(data_array, 1.0 / 50)
+        self.num_inks = num_inks
+
+    def batch_mix(self, percentages: npt.NDArray) -> npt.NDArray:
+        w_p = ((self.weights_array * percentages[:, np.newaxis, :]) +
+               (1 - self.weights_array) * (1 - percentages[:, np.newaxis, :]))
+        w_p_prod = np.prod(w_p, axis=2, keepdims=True)
+
+        result = np.power(np.matmul(w_p_prod.transpose(0, 2, 1), self.data_array), 50).squeeze(axis=1)
+
+        return result
+
+    def batch_observe(self, percentages: npt.NDArray, observer: npt.NDArray, illuminant: npt.NDArray):
+        spectras = self.batch_mix(percentages)
+        numerator = np.matmul(observer, (spectras * illuminant).T)
+        denominator = np.matmul(observer, illuminant.T)
+        result = np.divide(numerator, denominator[:, np.newaxis])
+        return result.T
+
+    def get_pca_size(self, observe: npt.NDArray, illuminant: npt.NDArray):
+        # built for very quick evaluation of gamut
+        stepsize = 0.2
+        values = np.arange(0, 1 + stepsize, stepsize)
+        mesh = np.meshgrid(*([values] * self.num_inks))
+        grid = np.stack(mesh, axis=-1).reshape(-1, self.num_inks)
+
+        stimulus = self.batch_observe(grid, observe, illuminant)
+        pca = PCA(n_components=observe.shape[0])
+        pca.fit(stimulus)
+        return np.sqrt(pca.explained_variance_)[-1]
+
+
 class CellNeugebauer:
     # cell neugebauer with one division
     def __init__(self, primaries_dict: Dict[Union[Tuple, str], Spectra], illuminant: Optional[Spectra] = None, n=50):
@@ -284,9 +391,8 @@ class CellNeugebauer:
         return observe_spectra(self.mix(percentages), observer, illuminant)
 
 
-
 class Neugebauer:
-    def __init__(self, primaries_dict: Dict[Union[Tuple, str], Spectra], n=50):
+    def __init__(self, primaries_dict: Optional[Dict[Union[Tuple, str], Spectra]], n=50):
         """
         primaries_dict is (key, value) pairs where the key is either a
         string of binary digits or a tuple of binary values, and value is a Spectra.
@@ -332,6 +438,18 @@ class Neugebauer:
             return observe_spectras(self.batch_mix(percentages), observer, illuminant)
         return observe_spectra(self.mix(percentages), observer, illuminant)
 
+    def get_pca_size(self, observe: npt.NDArray, illuminant: npt.NDArray):
+        # built for very quick evaluation of gamut
+        stepsize = 0.2
+        values = np.arange(0, 1 + stepsize, stepsize)
+        mesh = np.meshgrid(*([values] * self.num_inks))
+        grid = np.stack(mesh, axis=-1).reshape(-1, self.num_inks)
+
+        stimulus = self.observe(grid, observe, illuminant)
+        pca = PCA(n_components=observe.shape[0])
+        pca.fit(stimulus)
+        return np.sqrt(pca.explained_variance_)[-1]
+
 
 class InkGamut:
     def __init__(self, inks: Union[List[Spectra], Neugebauer, CellNeugebauer], paper: Optional[Spectra] = None,
@@ -354,7 +472,8 @@ class InkGamut:
             self.neugebauer = inks
             return
 
-        assert np.array_equal(self.wavelengths, paper.wavelengths)
+        assert np.array_equal(self.wavelengths, paper.wavelengths), \
+            "Must pass in paper spectra with consistent wavelengths"
 
         for ink in inks:
             assert np.array_equal(ink.wavelengths, self.wavelengths)
@@ -391,7 +510,10 @@ class InkGamut:
     #
     #     return point_cloud, percentages
 
-    def batch_generator(self, iterable, batch_size=100):
+
+
+
+    def batch_generator(self, iterable, batch_size):
         """Utility function to generate batches from an iterable."""
         iterator = iter(iterable)
         for first in iterator:
@@ -413,9 +535,9 @@ class InkGamut:
             total_combinations = grid.shape[0]
 
         desc = "Generating point cloud"
-        verbose_progress = (lambda x: tqdm(x, total=total_combinations / batch_size, desc=desc)) if verbose else (lambda x: x)
+        verbose_progress = (lambda x: tqdm(x, total=int(total_combinations / batch_size), desc=desc)) if verbose else (lambda x: x)
 
-        for batch in verbose_progress(self.batch_generator(grid, batch_size=int(batch_size))):
+        for batch in verbose_progress(self.batch_generator(grid, int(batch_size))):
             valid_percentages = batch[np.all(batch <= 1, axis=1)]
 
             if valid_percentages.size == 0:
@@ -447,19 +569,19 @@ class InkGamut:
         for dst, (i, j) in buckets:
             _percentages.append((dst, (tuple(percentages[i]), tuple(percentages[j]))))
 
-        for t in range(refined):
-            _, (pi, pj) = _percentages[t]
-            refined_pc, refined_perc = self.get_refined_point_cloud(observe, np.array(pi), np.array(pj),  stepsize=2*stepsize)
-
-            buckets = sort_buckets(bucket_points(refined_pc, axis=axis), axis=axis)
-            for dst, (i, j) in buckets:
-                _percentages.append((dst, (tuple(refined_perc[i]), tuple(refined_perc[j]))))
+        # for t in range(refined):
+        #     _, (pi, pj) = _percentages[t]
+        #     refined_pc, refined_perc = self.get_refined_point_cloud(observe, np.array(pi), np.array(pj),  stepsize=2*stepsize)
+        #
+        #     buckets = sort_buckets(bucket_points(refined_pc, axis=axis), axis=axis)
+        #     for dst, (i, j) in buckets:
+        #         _percentages.append((dst, (tuple(refined_perc[i]), tuple(refined_perc[j]))))
 
         _percentages.sort(reverse=True)
         return _percentages
 
     def get_width(self, observe: Union[Observer, npt.NDArray],
-                  axis=2, stepsize=0.1, verbose=True, save=False, refined=False):
+                  axis=2, stepsize=0.1, verbose=True, save=False, refined=0):
         percentages = self.get_buckets(observe, axis=axis, stepsize=stepsize, verbose=verbose, save=save, refined=refined)
 
         dst, (pi, pj) = percentages[0]
