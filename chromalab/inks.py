@@ -252,6 +252,30 @@ class InkLibrary:
         assert np.array_equal(self.wavelengths, paper.wavelengths)
         self.paper = paper.data
 
+    def distance_search(self, observe: Union[Observer, npt.NDArray],
+                          illuminant: Union[Spectra, npt.NDArray], top=100, k=None, stepsize=0.1):
+        # slow unoptimized method, finds max q distance along point cloud
+        if isinstance(observe, Observer):
+            observe = observe.get_sensor_matrix(self.wavelengths)
+        if k is None:
+            k = observe.shape[0]
+
+        top_scores = []
+        for inkset_idx in tqdm(combinations(range(self.K), k), total=comb(self.K, k), desc="finding best inkset"):
+            names = [self.names[i] for i in inkset_idx]
+
+            spectras = [Spectra(wavelengths=self.wavelengths, data=self.spectras[idx]) for idx in inkset_idx]
+
+            gamut = InkGamut(spectras, Spectra(wavelengths=self.wavelengths, data=self.paper), illuminant)
+            score = gamut.get_width(observe, stepsize=stepsize, verbose=False)
+            if len(top_scores) < top:
+                heapq.heappush(top_scores, (score, names))
+            else:
+                if score > top_scores[0][0]:
+                    heapq.heapreplace(top_scores, (score, names))
+        return sorted(top_scores, reverse=True)
+
+
     def cached_pca_search(self, observe: Union[Observer, npt.NDArray],
                           illuminant: Union[Spectra, npt.NDArray], top=50, k=None):
         # super efficient way to find best k-ink subset of large K ink library
@@ -520,7 +544,7 @@ class InkGamut:
             yield np.array(list(islice(chain([first], iterator), batch_size - 1)))
 
     def get_point_cloud(self, observe: Union[Observer, npt.NDArray],
-                        stepsize=0.1, grid: Optional[npt.NDArray] = None, verbose=True, batch_size=1e5):
+                        stepsize=0.1, grid: Optional[npt.NDArray] = None, verbose=True, batch_size=2e5):
         if isinstance(observe, Observer):
             observe = observe.get_sensor_matrix(wavelengths=self.wavelengths)
 
