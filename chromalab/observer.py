@@ -277,7 +277,7 @@ class Cone(Spectra):
 
     @staticmethod
     def q_cone(wavelengths=None, template="govardovskii"):
-        return Cone.cone(547, template=template, od=0.35, wavelengths=wavelengths)
+        return Cone.cone(545, template=template, od=0.35, wavelengths=wavelengths)
 
 
 def get_m_transitions(m, wavelengths, both_types=True):
