@@ -68,8 +68,7 @@ nomogram template, optical density, wavelengths, etc.
 Construct a cone fundamental from scratch:
 
 ```
-from chromalab.observer import Cone, Observer
-from chromalab.nomograms import GovardovskiiNomogram 
+from chromalab.observer import Cone, Observer, GovardovskiiNomogram
 import matplotlib.pyplot as plt
 import numpy as np
 
