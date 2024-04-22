@@ -264,7 +264,7 @@ class Cone(Spectra):
         if template is None:
             reflectances = Cone.ss_data.iloc[:, [0, 2]].to_numpy()
             return Cone(reflectances).interpolate_values(wavelengths)
-        return Cone.cone(530, template=template, od=0.35, wavelengths=wavelengths)
+        return Cone.cone(530, template=template, od=0.15, wavelengths=wavelengths)
 
     @staticmethod
     def s_cone(wavelengths=None, template=None):
@@ -276,7 +276,8 @@ class Cone(Spectra):
         return Cone.cone(419, template=template, od=0.5, wavelengths=wavelengths)
 
     @staticmethod
-    def q_cone(wavelengths=None, template="govardovskii"):
+    def q_cone(wavelengths=None, template="neitz"):
+        # 545 per nathan & merbs 92
         return Cone.cone(545, template=template, od=0.35, wavelengths=wavelengths)
 
 
@@ -319,10 +320,11 @@ class Observer:
 
     @staticmethod
     def tetrachromat(wavelengths=None, illuminant=None):
-        l_cone = Cone.l_cone(wavelengths)
-        q_cone = Cone.q_cone(wavelengths)
-        m_cone = Cone.m_cone(wavelengths)
-        s_cone = Cone.s_cone(wavelengths)
+        # This is a "maximally well spaced" tetrachromat
+        l_cone = Cone.cone(559, wavelengths=wavelengths, template="neitz", od=0.35)
+        q_cone = Cone.cone(545, wavelengths=wavelengths, template="neitz", od=0.35)
+        m_cone = Cone.cone(530, wavelengths=wavelengths, template="neitz", od=0.35)
+        s_cone = Cone.s_cone(wavelengths=wavelengths)
         return Observer([s_cone, m_cone, q_cone, l_cone], illuminant=illuminant)
 
     def get_whitepoint(self, wavelengths: Optional[npt.NDArray] = None):
@@ -349,14 +351,7 @@ class Observer:
         Either pass in a Spectra of light to observe or data that agrees with self.wavelengths.
         """
         if isinstance(data, Spectra):
-            if np.array_equal(data.wavelengths, self.wavelengths):
-                data = data.data
-            else:
-                # have to interpolate
-                interp_color = []
-                for wavelength in self.wavelengths:
-                    interp_color.append(data.interpolated_value(wavelength))
-                data = np.array(interp_color)
+            data = data.interpolate_values(self.wavelengths).data
         else:
             assert data.size == self.wavelengths.size, f"Data shape {data.shape} must match wavelengths shape {self.wavelengths.shape}"
 
