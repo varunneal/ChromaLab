@@ -321,10 +321,10 @@ class Observer:
     @staticmethod
     def tetrachromat(wavelengths=None, illuminant=None):
         # This is a "maximally well spaced" tetrachromat
-        l_cone = Cone.cone(559, wavelengths=wavelengths, template="neitz", od=0.35)
+        l_cone = Cone.l_cone(wavelengths) #Cone.cone(559, wavelengths=wavelengths, template="neitz", od=0.35)
         q_cone = Cone.cone(545, wavelengths=wavelengths, template="neitz", od=0.35)
-        m_cone = Cone.cone(530, wavelengths=wavelengths, template="neitz", od=0.35)
-        s_cone = Cone.s_cone(wavelengths=wavelengths)
+        m_cone = Cone.m_cone(wavelengths) ##Cone.cone(530, wavelengths=wavelengths, template="neitz", od=0.35)
+        s_cone = Cone.s_cone(wavelengths) ##Cone.s_cone(wavelengths=wavelengths)
         return Observer([s_cone, m_cone, q_cone, l_cone], illuminant=illuminant)
 
     def get_whitepoint(self, wavelengths: Optional[npt.NDArray] = None):

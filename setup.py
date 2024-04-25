@@ -6,7 +6,7 @@ with open('requirements.txt') as f:
 setup(
     name="chromalab",
     description="Library for cone fundamentals and printer math.",
-    version="0.2",
+    version="0.3",
     packages=find_packages(),
     package_data={
         "chromalab": ["cones/*.csv"],
