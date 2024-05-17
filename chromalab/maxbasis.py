@@ -28,12 +28,8 @@ class MaxBasis:
     def __computeVolume(self, wavelengths):
         # wavelengths = [matrix.wavelengths[idx] for idx in indices]
         transitions = self.getCutpointTransitions(wavelengths)
-
         cone_vals = np.array([np.dot(self.matrix, Spectra.from_transitions(x, 1 if i == 0 else 0, self.wavelengths).data) for i, x in enumerate(transitions)])
-        try:
-            vol = np.abs(np.linalg.det(cone_vals))
-        except:
-            import pdb; pdb.set_trace()
+        vol = np.abs(np.linalg.det(cone_vals))
         return vol
     
 

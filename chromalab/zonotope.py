@@ -82,7 +82,6 @@ def getFacetSums(facet_ids, matrix, dim, verbose=False):
     return facetSums
 
 def getReflectance(cutpoint_ids, start, matrix, dim, maxval=1.0, verbose=False):
-    # facetSums = {}
     # then for each face, separate the spectral locus and add up the vectors
     ref = np.zeros(matrix.shape[1])
     for i,x in enumerate(matrix.T):
@@ -155,9 +154,7 @@ def orderFace(face):
                 next_elem = next_cand[::-1, :]
                 break
         if next_elem is None:
-                # import pdb; pdb.set_trace()
                 ordered_list.append(ordered_list[-1])
-            # raise Exception("Zonotope doesn't close.")
         else: 
             ordered_list.append(next_elem)
     return ordered_list
