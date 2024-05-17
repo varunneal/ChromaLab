@@ -5,6 +5,7 @@ import numpy as np
 import numpy.typing as npt
 
 import warnings
+import copy
 
 from colour import SDS_ILLUMINANTS, SDS_LIGHT_SOURCES, sd_to_XYZ, XYZ_to_xy, XYZ_to_sRGB, SpectralDistribution, notation
 
@@ -47,6 +48,24 @@ class Spectra:
 
     def array(self) -> npt.NDArray:
         return np.column_stack((self.wavelengths, self.data))
+
+    @staticmethod
+    def from_transitions(transitions, start, wavelengths, maxVal = 1) -> 'Spectra':
+        step = wavelengths[1] - wavelengths[0]
+        minwave = wavelengths[0]
+        maxwave = wavelengths[-1] + step
+
+        transitions = copy.deepcopy(transitions)
+        transitions.insert(0, minwave)
+        transitions.insert(len(transitions), maxwave)
+        transitions = [round(t, 2) for t in transitions]
+        ref = []
+        for i in range(len(transitions)-1):
+            ref += [np.full(int(round((transitions[i+1] - transitions[i])/ step)), (start + i) % 2)]
+        ref = np.concatenate(ref)
+        assert(len(ref) == len(wavelengths))
+        data = ref * maxVal
+        return Spectra(wavelengths=wavelengths, data=data)
 
     """Converts Spectra to the SpectralDistribution object from Colour library."""
     def to_colour(self) -> SpectralDistribution:
@@ -190,3 +209,7 @@ class Illuminant(Spectra):
         if light is None:
             light = SDS_LIGHT_SOURCES.get(name)
         return Illuminant(data=light.values / np.max(light.values), wavelengths=light.wavelengths)
+
+def convert_refs_to_spectras(refs, wavelengths) -> List[Spectra]:
+    refs = [np.concatenate([wavelengths[:, np.newaxis], ref[:, np.newaxis]], axis=1) for ref in refs]
+    return [Spectra(ref) for ref in refs]
