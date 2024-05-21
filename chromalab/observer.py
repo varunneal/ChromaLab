@@ -1,12 +1,15 @@
 from importlib import resources
 from itertools import combinations
+from tqdm import tqdm
 from typing import List, Union, Optional
+from scipy.spatial import ConvexHull
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 
-from .spectra import Spectra
+from .spectra import Spectra, Illuminant
+from .zonotope import getReflectance, getZonotopePoints
 
 
 def BaylorNomogram(wls, lambdaMax: int):
@@ -293,9 +296,8 @@ def get_m_transitions(m, wavelengths, both_types=True):
 
     return all_transitions
 
-
 class Observer:
-    def __init__(self, sensors: List[Spectra], illuminant: Optional[Spectra] = None, min_transition_size: int = 10):
+    def __init__(self, sensors: List[Spectra], illuminant: Optional[Spectra] = None, verbose: bool = False):
         self.dimension = len(sensors)
         self.sensors = sensors
 
@@ -303,13 +305,16 @@ class Observer:
         self.wavelengths = total_wavelengths
 
         self.sensor_matrix = self.get_sensor_matrix(total_wavelengths)
+        self.illuminant = illuminant.interpolate_values(self.wavelengths)
         if illuminant is not None:
-            illuminant = illuminant.interpolate_values(self.wavelengths).data
+            illuminant = illuminant.interpolate_values(self.wavelengths)
         else:
-            illuminant = np.ones_like(self.wavelengths)
+            illuminant = Illuminant(np.ones_like(self.wavelengths), self.wavelengths)
 
         self.illuminant = illuminant
-        self.min_transition_size = min_transition_size
+        self.normalized_sensor_matrix = self.get_normalized_sensor_matrix(total_wavelengths)
+
+        self.verbose = verbose
 
     @staticmethod
     def trichromat(wavelengths=None, illuminant=None):
@@ -319,18 +324,18 @@ class Observer:
         return Observer([s_cone, m_cone, l_cone], illuminant=illuminant)
 
     @staticmethod
-    def tetrachromat(wavelengths=None, illuminant=None):
+    def tetrachromat(wavelengths=None, illuminant=None, verbose=False):
         # This is a "maximally well spaced" tetrachromat
         l_cone = Cone.l_cone(wavelengths) #Cone.cone(559, wavelengths=wavelengths, template="neitz", od=0.35)
         q_cone = Cone.cone(545, wavelengths=wavelengths, template="neitz", od=0.35)
         m_cone = Cone.m_cone(wavelengths) ##Cone.cone(530, wavelengths=wavelengths, template="neitz", od=0.35)
         s_cone = Cone.s_cone(wavelengths) ##Cone.s_cone(wavelengths=wavelengths)
-        return Observer([s_cone, m_cone, q_cone, l_cone], illuminant=illuminant)
+        return Observer([s_cone, m_cone, q_cone, l_cone], illuminant=illuminant, verbose=verbose)
 
     def get_whitepoint(self, wavelengths: Optional[npt.NDArray] = None):
         sensor_matrix = self.get_sensor_matrix(wavelengths)
 
-        return np.matmul(sensor_matrix, self.illuminant)
+        return np.matmul(sensor_matrix, self.illuminant.data)
 
     def get_sensor_matrix(self, wavelengths: Optional[npt.NDArray] = None):
         """
@@ -345,6 +350,14 @@ class Observer:
                 sensor_matrix[i, j] = sensor.interpolated_value(wavelength)
 
         return sensor_matrix
+    
+    def get_normalized_sensor_matrix(self, wavelengths: Optional[npt.NDArray] = None):
+        """
+        Get normalized sensor matrix as specific wavelengths
+        """
+        sensor_matrix = self.get_sensor_matrix(wavelengths)
+        whitepoint = np.matmul(self.sensor_matrix, self.illuminant.data)
+        return (sensor_matrix.T / whitepoint).T
 
     def observe(self, data: Union[npt.NDArray, Spectra]):
         """
@@ -355,46 +368,81 @@ class Observer:
         else:
             assert data.size == self.wavelengths.size, f"Data shape {data.shape} must match wavelengths shape {self.wavelengths.shape}"
 
-        observed_color = np.matmul(self.sensor_matrix, data * self.illuminant)
-        whitepoint = np.matmul(self.sensor_matrix, self.illuminant)
+        observed_color = np.matmul(self.sensor_matrix, data * self.illuminant.data)
+        whitepoint = np.matmul(self.sensor_matrix, self.illuminant.data)
 
         return np.divide(observed_color, whitepoint)
 
     def dist(self, color1: Union[npt.NDArray, Spectra], color2: Union[npt.NDArray, Spectra]):
         return np.linalg.norm(self.observe(color1) - self.observe(color2))
 
-    def get_transitions(self) -> List[npt.NDArray]:
-        transitions = []
+    def get_optimal_reflectances(self) -> npt.NDArray:
+        spectras = []
+        for cuts, start in self.facet_ids:
+            ref = getReflectance(cuts, start, self.normalized_sensor_matrix, self.dimension)
+            ref = np.concatenate([self.wavelengths[:, np.newaxis], ref[:, np.newaxis]], axis=1)
+            spectras+= [Spectra(ref, self.illuminant)]
+        return spectras
 
-        num_wavelengths = self.sensor_matrix.shape[1]
-        indices = list(range(num_wavelengths // self.min_transition_size))
+    def get_optimal_rgbs(self) -> npt.NDArray:
+        rgbs = []
+        for cuts, start in self.facet_ids:
+            ref = getReflectance(cuts, start, self.normalized_sensor_matrix, self.dimension)
+            ref = np.concatenate([self.wavelengths[:, np.newaxis], ref[:, np.newaxis]], axis=1)
+            rgbs+= [Spectra(ref).to_rgb(illuminant=self.illuminant)]
+        return np.array(rgbs)
 
-        # append black and white spectra at the start
-        transitions.append(np.zeros(num_wavelengths))
-        transitions.append(np.ones(num_wavelengths))
+    def __find_optimal_colors(self) -> Union[npt.NDArray, npt.NDArray]:
+        facet_ids, facet_sums = getZonotopePoints(self.normalized_sensor_matrix, self.dimension, self.verbose)
+        tmp = [[[x, 1], [x, 0]] for x in facet_ids]
+        self.facet_ids = [y for x in tmp for y in x]
+        self.point_cloud = np.array(list(facet_sums.values())).reshape(-1, self.dimension)
+        self.rgbs = self.get_optimal_rgbs()
+        
+    
+    def get_optimal_colors(self)-> Union[npt.NDArray, npt.NDArray]:
+        if not hasattr(self, 'point_cloud'):
+            self.__find_optimal_colors()
+        return self.point_cloud, self.rgbs
 
-        for selected_indices in combinations(indices, 2 * (self.dimension - 1)):
-            intervals = [(selected_indices[i], selected_indices[i + 1]) for i in range(0, len(selected_indices), 2)]
+    def get_full_colors(self) -> Union[npt.NDArray, npt.NDArray]:
+        if not hasattr(self, 'point_cloud'):
+            self.__find_optimal_colors()
+        chrom_points = transformToChromaticity(self.point_cloud)
+        hull = ConvexHull(chrom_points) # chromaticity coordinates now
+        self._full_indices = hull.vertices
+        return chrom_points[self._full_indices], np.array(self.rgbs)[self._full_indices]
 
-            transition = np.zeros(num_wavelengths)
-            for start, end in intervals:
-                transition[self.min_transition_size * start:self.min_transition_size * end] = 1
-
-            transitions.append(transition)
-
-        return transitions
-
-    def get_transition(self, index: int) -> npt.NDArray:
-        # todo: combinatorial approach instead of this ridiculousness
-        return list(self.get_transitions())[index]
-
-    def get_full_colors(self) -> npt.NDArray:
-        transitions = self.get_transitions()
-        transitions_matrix = np.array(transitions).T
-
-        colors = np.matmul(self.sensor_matrix, transitions_matrix)
-        return np.divide(colors, self.whitepoint.reshape((-1, 1)))
+    def getFacetIdxFromIdx(self, idx) -> tuple:
+        newidx = idx % int(len(self.point_cloud)/2)
+        tmp =  [int(i) for i in self.facet_ids[newidx]]
+        start = 0 if idx > int(len(self.point_cloud)/2) else 1
+        return tmp, start
+    
+    def get_trans_ref_from_idx(self, index:int) -> npt.NDArray:
+        cuts, start = self.getFacetIdxFromIdx(index)
+        return getReflectance(cuts, start, self.get_sensor_matrix(), self.dimension)
 
 
 def gaussian(x, A, mu, sigma):
     return A * np.exp(-(x - mu) ** 2 / (2 * sigma ** 2))
+
+def transformToChromaticity(matrix) -> npt.NDArray:
+    """
+    Transform Coordinates (n_rows x dim) into Hering Chromaticity Coordinates
+    """
+    HMatrix = getHeringMatrix(matrix.shape[1])
+    return (HMatrix@matrix.T).T[:, 1:]
+
+def getHeringMatrix(dim) -> npt.NDArray: # orthogonalize does not return the right matrix in python....
+    """
+    Get Hering Matrix for a given dimension
+    """
+    if dim == 2:
+        return np.array([[1/np.sqrt(2), 1/np.sqrt(2)], [1/np.sqrt(2), -(1/np.sqrt(2))]])
+    elif dim == 3: 
+        return np.array([[1/np.sqrt(3), 1/np.sqrt(3), 1/np.sqrt(3)], [np.sqrt(2/3), -(1/np.sqrt(6)), -(1/np.sqrt(6))], [0, 1/np.sqrt(2), -(1/np.sqrt(2))]])
+    elif dim == 4:
+        return np.array([[1/2, 1/2, 1/2, 1/2], [np.sqrt(3)/2, -(1/(2* np.sqrt(3))), -(1/(2 * np.sqrt(3))), -(1/(2 * np.sqrt(3)))], [0, np.sqrt(2/3), -(1/np.sqrt(6)), -(1/np.sqrt(6))], [0, 0, 1/np.sqrt(2), -(1/np.sqrt(2))]])
+    else: 
+        raise Exception("Can't implement orthogonalize without hardcoding")
