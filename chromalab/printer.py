@@ -34,6 +34,9 @@ class PrinterMapper:
             draw = self.printerDraws[self.channel2Printer[i+1]]
             draw.text((text_placement_x + ((i%3)*20), text_placement_y + ((i//3)*10)), f"{str(int(value*100))}," , font=font, fill=(0,0,0,255))
 
+    def DrawText(self, text, text_placement_x, text_placement_y):
+        self.printerDraws[0].text((text_placement_x,text_placement_y),text,font=font,fill=(0,0,0,255))
+
     def DrawEllipse(self, circle, color):
         if np.isnan(color[0]):
             self.printerDraws[0].ellipse(circle, width=3, fill=(0,0,0,25),outline=(0,0,0,255))
@@ -43,6 +46,16 @@ class PrinterMapper:
         print(f'colors= {colors}')
         for i, draw in enumerate(self.printerDraws):
             draw.ellipse(circle,width=0,fill=colors[i])
+
+    def DrawRect(self, circle, color):
+        if np.isnan(color[0]):
+            self.printerDraws[0].rectangle(circle, width=3, fill=(0,0,0,25),outline=(0,0,0,255))
+            return
+        color = [int(c*255) for c in color]
+        colors = self.channelPrinterMap(color)
+        print(f'colors= {colors}')
+        for i, draw in enumerate(self.printerDraws):
+            draw.rectangle(circle,width=0,fill=colors[i])
     
     def ExportImages(self,name,pageName):
         print(f"printing {name}/{pageName}")
