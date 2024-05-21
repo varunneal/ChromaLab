@@ -324,13 +324,13 @@ class Observer:
         return Observer([s_cone, m_cone, l_cone], illuminant=illuminant)
 
     @staticmethod
-    def tetrachromat(wavelengths=None, illuminant=None):
+    def tetrachromat(wavelengths=None, illuminant=None, verbose=False):
         # This is a "maximally well spaced" tetrachromat
         l_cone = Cone.l_cone(wavelengths) #Cone.cone(559, wavelengths=wavelengths, template="neitz", od=0.35)
         q_cone = Cone.cone(545, wavelengths=wavelengths, template="neitz", od=0.35)
         m_cone = Cone.m_cone(wavelengths) ##Cone.cone(530, wavelengths=wavelengths, template="neitz", od=0.35)
         s_cone = Cone.s_cone(wavelengths) ##Cone.s_cone(wavelengths=wavelengths)
-        return Observer([s_cone, m_cone, q_cone, l_cone], illuminant=illuminant)
+        return Observer([s_cone, m_cone, q_cone, l_cone], illuminant=illuminant, verbose=verbose)
 
     def get_whitepoint(self, wavelengths: Optional[npt.NDArray] = None):
         sensor_matrix = self.get_sensor_matrix(wavelengths)
@@ -390,7 +390,7 @@ class Observer:
             ref = getReflectance(cuts, start, self.normalized_sensor_matrix, self.dimension)
             ref = np.concatenate([self.wavelengths[:, np.newaxis], ref[:, np.newaxis]], axis=1)
             rgbs+= [Spectra(ref).to_rgb(illuminant=self.illuminant)]
-        return rgbs
+        return np.array(rgbs)
 
     def __find_optimal_colors(self) -> Union[npt.NDArray, npt.NDArray]:
         facet_ids, facet_sums = getZonotopePoints(self.normalized_sensor_matrix, self.dimension, self.verbose)

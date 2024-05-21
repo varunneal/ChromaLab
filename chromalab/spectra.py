@@ -213,3 +213,6 @@ class Illuminant(Spectra):
 def convert_refs_to_spectras(refs, wavelengths) -> List[Spectra]:
     refs = [np.concatenate([wavelengths[:, np.newaxis], ref[:, np.newaxis]], axis=1) for ref in refs]
     return [Spectra(ref) for ref in refs]
+
+def convert_refs_to_rgbs(refs, wavelengths) -> List[Spectra]:
+    return([Spectra(np.concatenate([wavelengths[:, np.newaxis], ref[:, np.newaxis]], axis=1)).to_rgb() for ref in refs])

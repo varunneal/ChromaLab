@@ -3,7 +3,6 @@ from functools import reduce
 from tqdm import tqdm
 
 import numpy as np
-import matplotlib.pyplot as plt
 
 from .observer import Observer
 from .spectra import Spectra, convert_refs_to_spectras
@@ -48,7 +47,7 @@ class MaxBasis:
         for i in range(self.dimension):
             spectra = np.concatenate([self.observer.wavelengths[:, np.newaxis], self.maximal_matrix[i][:, np.newaxis]], axis=1)
             self.maximal_sensors +=[Spectra(spectra, self.observer.wavelengths)]
-        self.maximal_observer = Observer(self.maximal_sensors, self.observer.illuminant)
+        self.maximal_observer = Observer(self.maximal_sensors, self.observer.illuminant, verbose=self.verbose)
         return self.maximal_sensors, self.maximal_observer
 
     
@@ -148,6 +147,9 @@ class MaxBasis:
     def get_cutpoints(self):
         return self.cutpoints
     
+    def get_cmf(self):
+        return self.maximal_sensors
+    
     def getCutpointTransitions(self, wavelengths):
         transitions = [[wavelengths[0]], [wavelengths[len(wavelengths)-1]]]
         transitions += [[wavelengths[i], wavelengths[i+1]] for i in range(len(wavelengths)-1)]
@@ -184,9 +186,6 @@ class MaxBasis:
                 madeupof = list(combinations(x, len(x)-1))
                 lines += [[alllines.index(elem) + 1, i + 1] for elem in madeupof] # connected to each elem
         refs = [Spectra.from_transitions( x, final_start[i], self.wavelengths) for i, x in enumerate(final_combos)]
-        spectras = convert_refs_to_spectras(refs, self.observer.illuminant)
-        rgbs = [s.to_rgb(illuminant=self.observer.illuminant) for s in spectras]        
-        points = np.array([self.maximal_matrix @ ref for ref in refs])
+        points = np.array([self.maximal_matrix @ ref.data for ref in refs])
+        rgbs = np.array([s.to_rgb(illuminant=self.observer.illuminant) for s in refs])
         return refs, points, rgbs, lines
-
-    
