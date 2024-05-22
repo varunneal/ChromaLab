@@ -8,3 +8,7 @@ tqdm
 scikit-learn
 pandas
 scipy
+jupyter
+open3d
+polyscope
+alphashape
