@@ -4,7 +4,7 @@ from tqdm import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
 
-from .observer import Observer, transformToChromaticity
+from .observer import transformToChromaticity
 from .spectra import Spectra
 from .maxbasis import MaxBasis
 
