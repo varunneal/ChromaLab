@@ -50,7 +50,9 @@ class Spectra:
 
     """Converts Spectra to the SpectralDistribution object from Colour library."""
     def to_colour(self) -> SpectralDistribution:
-        return SpectralDistribution(data=self.data, domain=self.wavelengths)
+        wvs = np.arange(self.wavelengths[0], self.wavelengths[-1] + 1, 1)
+        data = self.interpolate_values(wvs).data
+        return SpectralDistribution(data=data, domain=wvs)
 
     def to_xyz(self, illuminant: Optional["Spectra"] = None):
         i = illuminant.to_colour() if illuminant else None
@@ -59,8 +61,10 @@ class Spectra:
 
     def to_rgb(self, illuminant: Optional["Spectra"] = None):
         i = illuminant.to_colour() if illuminant is not None else Illuminant.get("D65").to_colour()
-        coord = XYZ_to_xy(sd_to_XYZ(i) / 100)
-        return np.clip(XYZ_to_sRGB(self.to_xyz(illuminant), coord), 0, 1)
+
+        chromaticity_coord = XYZ_to_xy(sd_to_XYZ(i) / 100)
+
+        return np.clip(XYZ_to_sRGB(self.to_xyz(illuminant), illuminant=chromaticity_coord), 0, 1)
 
     def to_hex(self, illuminant: Optional["Spectra"] = None):
         return notation.RGB_to_HEX(np.clip(self.to_rgb(illuminant), 0, 1))
@@ -76,6 +80,8 @@ class Spectra:
 
     def interpolate_values(self, wavelengths: Union[npt.NDArray, None]) -> 'Spectra':
         if wavelengths is None:
+            return self
+        if np.array_equal(wavelengths, self.wavelengths):
             return self
         interpolated_data = []
         for wavelength in wavelengths:
@@ -133,9 +139,12 @@ class Spectra:
 
         return self.__class__(**attrs)
 
-    def __mul__(self, scalar: Union[int, float]):
+    def __mul__(self, other: Union[int, float, 'Spectra']):
         attrs = self.__dict__.copy()
-        attrs["data"] = scalar * self.data
+        if isinstance(other, (int, float)):
+            attrs["data"] = other * self.data
+        else:
+            attrs["data"] = other.data * self.data
         return self.__class__(**attrs)
 
     def __rmul__(self, scalar: Union[int, float]):
