@@ -1,6 +1,5 @@
 from importlib import resources
 from itertools import combinations
-from tqdm import tqdm
 from typing import List, Union, Optional
 from scipy.spatial import ConvexHull
 

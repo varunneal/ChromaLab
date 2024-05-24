@@ -12,3 +12,4 @@ jupyter
 open3d
 polyscope
 alphashape
+colour-science
