@@ -146,8 +146,8 @@ class CubeMap:
         else:
             ii, dd =  self._find_closest_points(candidate_points_cone, self.point_cloud, radius_lim)
         
-        cone_basis_pts =  np.array([self.point_cloud[i] if i != self.point_cloud.shape[0] else np.array([0, 0, 0, 0]) for i in ii ])
-        maxbasis_pts =  np.array([hering_pts[i] if i != self.point_cloud.shape[0] else np.array([0, 0, 0, 0]) for i in ii ])
+        cone_basis_pts =  np.array([self.point_cloud[i] if i != self.point_cloud.shape[0] else np.array([np.nan, np.nan, np.nan, np.nan]) for i in ii ])
+        maxbasis_pts =  np.array([hering_pts[i] if i != self.point_cloud.shape[0] else np.array([np.nan, np.nan, np.nan, np.nan]) for i in ii ])
 
        
         if hasattr(self, "rgbs"):
@@ -185,6 +185,12 @@ class CubeMap:
         ax.scatter(cm[:, 0], cm[:, 1], c=rgb.reshape(-1, 3), s=70)
 
 
+    def get_cubemap_percentages(self, perc, lumval, satval, side_len, method='hering'):
+        # get the percentage of each face of the cube map
+        idxs, distances, rgb, selected_conebasis, selected_maxbasis, candidate_conebasis_pts, candidate_maxbasis_pts = self.get_cube_map(lumval, satval, side_len, method=method)
+        percentages =  np.array([perc[i] if i != perc.shape[0] else np.array([np.nan, np.nan, np.nan, np.nan, np.nan]) for i in idxs ])
+        return percentages.reshape(6, side_len * side_len, perc.shape[1])
+
     def display_detailed_cubemap(self, lumval, satval, side_len, method='hering'):
         # sphere_pts = self._sample_cube_map(satval, side_len).reshape(-1, 3)
         # lmsq_sphere_pts = self._get_cubemap_samples_in_lmsq(lumval, satval, side_len)
@@ -218,16 +224,16 @@ class CubeMap:
         ax = fig.add_subplot(2, 2, 3, projection='3d')
         ax.set_title("Reprojected Selected Points in Metric Basis", fontsize=10)
         ax.scatter(candidate_maxbasis_pts[:, 1], candidate_maxbasis_pts[:, 2], candidate_maxbasis_pts[:, 3], s=70, c='r', alpha=0.1)
-        selected_points = np.array([pt for pt in selected_maxbasis.reshape(-1, 4) if (pt != np.array([0, 0, 0, 0])).all()])
-        selected_rgbs = np.array([rgb for rgb, pt in zip(rgb.reshape(-1, 3), selected_maxbasis.reshape(-1, 4)) if (pt != np.array([0, 0, 0, 0])).all()])
+        selected_points = np.array([pt for pt in selected_maxbasis.reshape(-1, 4) if (pt != np.array([np.nan, np.nan, np.nan, np.nan])).all()])
+        selected_rgbs = np.array([rgb for rgb, pt in zip(rgb.reshape(-1, 3), selected_maxbasis.reshape(-1, 4)) if (pt != np.array([np.nan, np.nan, np.nan, np.nan])).all()])
         ax.scatter(selected_points[:, 1], selected_points[:, 2], selected_points[:, 3], c=selected_rgbs, s=70)
 
         ax = fig.add_subplot(2, 2, 4, projection='3d')
         ax.set_title("Reprojected Selected Points in Metric Basis", fontsize=10)
         cand_pts = transformToChromaticity(candidate_conebasis_pts)
         ax.scatter(cand_pts[:, 0], cand_pts[:,  1], cand_pts[:, 2], s=70, c='r', alpha=0.1)
-        selected_points = transformToChromaticity(np.array([pt for pt in selected_conebasis.reshape(-1, 4) if (pt != np.array([0, 0, 0, 0])).all()]))
-        selected_rgbs = np.array([rgb for rgb, pt in zip(rgb.reshape(-1, 3), selected_conebasis.reshape(-1, 4)) if (pt != np.array([0, 0, 0, 0])).all()])
+        selected_points = transformToChromaticity(np.array([pt for pt in selected_conebasis.reshape(-1, 4) if (pt != np.array([np.nan, np.nan, np.nan, np.nan])).all()]))
+        selected_rgbs = np.array([rgb for rgb, pt in zip(rgb.reshape(-1, 3), selected_conebasis.reshape(-1, 4)) if (pt != np.array([np.nan, np.nan, np.nan, np.nan])).all()])
         ax.scatter(selected_points[:, 0], selected_points[:, 1], selected_points[:, 2], c=selected_rgbs, s=70)
 
         plt.show()
@@ -247,7 +253,7 @@ class CubeMap:
             fig.tight_layout()
         
         plt.show()
-
+        return selected_maxbasis, idxs
 
 
 
