@@ -39,11 +39,12 @@ class PrinterMapper:
 
     def DrawEllipse(self, circle, color):
         if np.isnan(color[0]):
+            print("printing NAN")
             self.printerDraws[0].ellipse(circle, width=3, fill=(0,0,0,25),outline=(0,0,0,255))
             return
         color = [int(c*255) for c in color]
         colors = self.channelPrinterMap(color)
-        print(f'colors= {colors}')
+        # print(f'colors= {colors}')
         for i, draw in enumerate(self.printerDraws):
             draw.ellipse(circle,width=0,fill=colors[i])
 
@@ -67,6 +68,9 @@ class PrinterMapper:
             im.save(f'{self.directory}/{name}/print{imName}_page{pageName}.tif')
 
 class Printer():
+    def testFunc():
+        return "hello World"
+
     # a printer map takes a color vector and returns an ordered list of CMYK values to print
     def SIGGRAPH2024printerMap(c):
         return [(c[0],c[1],c[2],0),
@@ -289,7 +293,7 @@ class Printer():
         printerMapper.ExportImages(name,pageName)
 
     #TODO: link this with the cubemap functions, old code:
-    # file_path = "/Users/frackfrick/Desktop/SchoolStuff/Research/Archive7/measured_2.999849055699836_9x9sampleperecentages.npy"
+    # file_path = "/Users/frackfrick/Desktop/SchoolStuff/compColor/25lamy_percentages.npy"
     # sphere_path = "/Users/frackfrick/Desktop/SchoolStuff/Research/spherical_coordinates_of_cubemap.npy"
     # index_path = "/Users/frackfrick/Desktop/SchoolStuff/Research/9x9_idx_into_cubemap.npy"
     # # irgb_path = "/Users/frackfrick/Desktop/SchoolStuff/Research/Archive6/ideal_2.999849055699836_9x9samplesRGBs.npy"
@@ -302,20 +306,18 @@ class Printer():
     # index = np.load(index_path)
     # irgb = np.load(irgb_path)
     # reflectance = np.load(reflect_path)
-    def newGrid(self,index,data,name):
-        dotSize = 20
+    def new9x9Grid(self,index,data,name):
+        dotSize = 30
         r = dotSize/2
-        border = 20
+        border = 5
         size = 1024
-        printerMapper = PrinterMapper(self.printerMap,(int(size*1.2), size),self.printerNames,self.outDir)
-        
-
+        printerMapper = PrinterMapper(self.printerMap,(int(size*1.3), size),self.printerNames,self.outDir)
         for square in range(6):
             for c in range(81):
                 ind = index[square][c//9][c%9]
-                x = 0 + r + ind[0] * 8 * (dotSize + border) + 2 * border
-                y = -100 + r + ind[1] * 8 * (dotSize + border) + 2 * border
-                y = 2300 - y
+                x = 20 + r + ind[0] * 8 * (dotSize + border) + 2 * border
+                y = r + ind[1] * 8 * (dotSize + border) + 2 * border
+                y = size - 20 - y
                 if square == 0:
                     y -= (dotSize+border)*2
                     x += (dotSize+border)*1
@@ -335,12 +337,86 @@ class Printer():
                     # y -= 100
                 inde = c
                 c = data[square][c]
-                c = (c[0],0,0,c[1],c[2],c[3])
                 # print(inde,c[0])
                 circle = [x - r, y - r, x + r, y + r]
+                # print("circle is",circle)
                 printerMapper.DrawEllipse(circle,c)
 
-        printerMapper.ExportImages(name)
+        printerMapper.ExportImages(name,0)
+
+    def new5x5Grid(self,index,data,name,doRect=False):
+        dotSize = 55
+        r = dotSize/2
+        border = 5
+        size = 1024
+        printerMapper = PrinterMapper(self.printerMap,(int(size*1.3), size),self.printerNames,self.outDir)
+        for square in range(6):
+            for c in range(25):
+                row = (c//5)*2
+                col = (c%5)*2
+                c = 9*row + col
+                # ind = index[square][(c//5)*2][(c%5)*2]
+                ind = index[square][c//9][c%9]
+                x = 20 + r + ind[0] * 8 * (dotSize/2 + border) + 2 * border
+                y = r + ind[1] * 8 * (dotSize/2 + border) + 2 * border
+                y = size - 20 - y
+                if square == 0:
+                    y -= (dotSize+border)*2
+                    x += (dotSize+border)*1
+                if square == 1:
+                    y -= (dotSize+border)*1
+                if square == 2:
+                    x += (dotSize+border)*1
+                    y -= (dotSize+border)*1
+                if square == 3:
+                    x += (dotSize+border)*2
+                    y -= (dotSize+border)*1
+                if square == 4:
+                    x += (dotSize+border)*3
+                    y -= (dotSize+border)*1
+                if square == 5:
+                    x += (dotSize+border)*1
+                    # y -= 100
+                inde = c
+                c = data[square][c]
+                # print(inde,c[0])
+                circle = [x - r, y - r, x + r, y + r]
+                # print("circle is",circle)
+                if doRect:
+                    printerMapper.DrawRect(circle,c)
+                else:
+                    printerMapper.DrawEllipse(circle,c)
+
+        printerMapper.ExportImages(name,0)
+
+    def new9x9Shuffle(self,index,data,swapIndicies,name):
+        dotSize = 55
+        r = dotSize/2
+        border = 5
+        size = 1024
+        printerMapper = PrinterMapper(self.printerMap,(int(size*1.3), size),self.printerNames,self.outDir)
+        for square in (0,5):
+            for c in range(81):
+                ind = index[square][c//9][c%9]
+                x = 20 + r + ind[0] * 8 * (dotSize + border) + 2 * border
+                y = r + ind[1] * 8 * (dotSize + border) + 2 * border
+                y = size - 20 - y
+                if square == 0:
+                    y += 760
+                    x -= 400
+                if square == 5:
+                    y -= 200
+                    x += 200
+                if c in swapIndicies:
+                    c = data[5-square][c]
+                else:
+                    c = data[square][c]
+                # print(inde,c[0])
+                circle = [x - r, y - r, x + r, y + r]
+                # print("circle is",circle)
+                printerMapper.DrawEllipse(circle,c)
+
+        printerMapper.ExportImages(name,0)
 
     def newRGBGrid(self,index,irgb):
         size = 1024
@@ -438,13 +514,13 @@ p = Printer(directory="./chromalab")
 #     outside = p.CIJKtoCMYIJK(p.div100(outside))
 #     p.generate_CC(inside,outside,0,secret,t,True)
 
-l=[]
-for c in range(2):
-    for m in range(2):
-        for y in range(2):
-            for i in range(2):
-                for j in range(2):
-                    for k in range(2):
-                        l += [[c,m,y,i,j,k]]
-p.generateDotList(l)
+# l=[]
+# for c in range(2):
+#     for m in range(2):
+#         for y in range(2):
+#             for i in range(2):
+#                 for j in range(2):
+#                     for k in range(2):
+#                         l += [[c,m,y,i,j,k]]
+# p.generateDotList(l)
 
