@@ -184,6 +184,14 @@ class CubeMap:
         cm = cubemap.reshape(-1, 2)
         ax.scatter(cm[:, 0], cm[:, 1], c=rgb.reshape(-1, 3), s=70)
 
+    def get_cubemap_indicies(self,side_len):
+        cube_left_corner_pts = np.array([[1, 2], [0, 1], [1, 1], [2, 1], [3, 1], [1, 0]])
+        step = 1/side_len
+        # sample in the center of the square of each sub square
+        square = np.array([[i, j] for i in (np.arange(0, 1, step) + (1/2*step)) for j in np.arange(0, 1, step) + (1/2*step) ]).reshape(side_len, side_len, 2)
+        cubemap = np.array([ x + square for x in cube_left_corner_pts])
+        return cubemap
+
 
     def get_cubemap_percentages(self, perc, lumval, satval, side_len, method='hering'):
         # get the percentage of each face of the cube map

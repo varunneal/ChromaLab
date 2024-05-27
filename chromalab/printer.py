@@ -255,15 +255,21 @@ class Printer():
     def CPVY2CMYIJK(self,cpvy):
         return (cpvy[0],0,0,cpvy[1],cpvy[2],cpvy[3])
 
-    def generateMultiPageDotList(self,colors,name="custom",maxX=None,biggestDots=False,xB=0,yB=0,perPage=None):
+    def generateMultiPageDotList(self,colors,name="custom",manualDotSize=None,customLabels=None,rect=False,maxX=None,biggestDots=False,xB=0,yB=0,perPage=None):
         fullLength = len(colors)
         splitColorList = [colors[i*perPage:(i+1)*perPage] for i in range((fullLength//perPage)+1)]
         print("!")
+        processed = 0
         for pageNum, colorList in enumerate(splitColorList):
             print("!!")
-            self.generateDotList(colorList,name,maxX,biggestDots,xB,yB,pageNum,printerMap=self.printerMap,printerNames=self.printerNames)
+            if customLabels:
+                labels = customLabels[processed:processed+len(colorList)]
+            else:
+                labels = None
+            self.generateDotList(colorList,name,manualDotSize,labels,rect,maxX,biggestDots,xB,yB,pageNum)
+            processed += len(colorList)
 
-    def generateDotList(self,colors,name="custom",maxX=None,biggestDots=False,xB=0,yB=0,pageName=""):
+    def generateDotList(self,colors,name="custom",manualDotSize=None,customLabels=None,rect=False,maxX=None,biggestDots=False,xB=0,yB=0,pageName=""):
         size = 1024
         dotSize = 95
         r = dotSize//2
@@ -274,21 +280,31 @@ class Printer():
         elif biggestDots:
             dotSize = (size//maxX)-border
             r = dotSize/2
+        if manualDotSize:
+            dotSize = manualDotSize
+            maxX = int((size-(4*border))/(dotSize + border))
         printerMapper = PrinterMapper(self.printerMap,(int(size*1.05), int(size*1.35)),self.printerNames,self.outDir)
         for i in range(len(colors)):
             x_mini = i%maxX
             y_mini = i//maxX
             x = xB + r + x_mini * (dotSize + border) + 2 * border
             y = yB + r + y_mini * (dotSize + border + 30) + 2 * border
+            # y = yB + r + y_mini * (dotSize + border) + 2 * border
             c = colors[i]
             print(c)
             text_placement_x = x - r + 15
             text_placement_y = y + r + border / 2 - 5
-
-            printerMapper.DrawLabel(c,text_placement_x,text_placement_y)
+            
+            if customLabels:
+                printerMapper.DrawText(customLabels[i],text_placement_x,text_placement_y)
+            else:
+                printerMapper.DrawLabel(c,text_placement_x,text_placement_y)
 
             circle = [x - r, y - r, x + r, y + r]
-            printerMapper.DrawEllipse(circle,c)
+            if rect:
+                printerMapper.DrawRect(circle,c)
+            else:
+                printerMapper.DrawEllipse(circle,c)
     
         printerMapper.ExportImages(name,pageName)
 
@@ -309,38 +325,46 @@ class Printer():
     def new9x9Grid(self,index,data,name):
         dotSize = 30
         r = dotSize/2
-        border = 5
+        border = 10
         size = 1024
         printerMapper = PrinterMapper(self.printerMap,(int(size*1.3), size),self.printerNames,self.outDir)
         for square in range(6):
             for c in range(81):
                 ind = index[square][c//9][c%9]
-                x = 20 + r + ind[0] * 8 * (dotSize + border) + 2 * border
+                x = r + ind[0] * 8 * (dotSize + border) + 2 * border
                 y = r + ind[1] * 8 * (dotSize + border) + 2 * border
-                y = size - 20 - y
-                if square == 0:
-                    y -= (dotSize+border)*2
-                    x += (dotSize+border)*1
-                if square == 1:
-                    y -= (dotSize+border)*1
-                if square == 2:
-                    x += (dotSize+border)*1
-                    y -= (dotSize+border)*1
-                if square == 3:
-                    x += (dotSize+border)*2
-                    y -= (dotSize+border)*1
-                if square == 4:
-                    x += (dotSize+border)*3
-                    y -= (dotSize+border)*1
-                if square == 5:
-                    x += (dotSize+border)*1
-                    # y -= 100
+                y = size - y
                 inde = c
                 c = data[square][c]
                 # print(inde,c[0])
                 circle = [x - r, y - r, x + r, y + r]
                 # print("circle is",circle)
                 printerMapper.DrawEllipse(circle,c)
+
+        printerMapper.ExportImages(name,0)
+
+    def newGeneralGrid(self,index,data,name,dotSize=30,border=10,labels=False,backupData=None):
+        r = dotSize/2
+        size = 1024
+        sideLen = len(index[0])
+        printerMapper = PrinterMapper(self.printerMap,(int(size*1.3), size),self.printerNames,self.outDir)
+        for square in range(6):
+            for c in range(sideLen**2):
+                ind = index[square][c//sideLen][c%sideLen]
+                x = r + ind[0] * (sideLen-1) * (dotSize + border) + 2 * border
+                y = r + ind[1] * (sideLen-1) * (dotSize + border) + 2 * border
+                y = size - y
+                inde = c
+                c = data[square][c]
+                if np.isnan(c[0]) and backupData is not None:
+                    c = backupData[square][inde]
+                # print(inde,c[0])
+                circle = [x - r, y - r, x + r, y + r]
+                # print("circle is",circle)
+                if not labels:
+                    printerMapper.DrawEllipse(circle,c)
+                else:
+                    printerMapper.DrawText(f"({square},{inde})",x,y)
 
         printerMapper.ExportImages(name,0)
 
@@ -357,26 +381,9 @@ class Printer():
                 c = 9*row + col
                 # ind = index[square][(c//5)*2][(c%5)*2]
                 ind = index[square][c//9][c%9]
-                x = 20 + r + ind[0] * 8 * (dotSize/2 + border) + 2 * border
+                x = r + ind[0] * 8 * (dotSize/2 + border) + 2 * border
                 y = r + ind[1] * 8 * (dotSize/2 + border) + 2 * border
-                y = size - 20 - y
-                if square == 0:
-                    y -= (dotSize+border)*2
-                    x += (dotSize+border)*1
-                if square == 1:
-                    y -= (dotSize+border)*1
-                if square == 2:
-                    x += (dotSize+border)*1
-                    y -= (dotSize+border)*1
-                if square == 3:
-                    x += (dotSize+border)*2
-                    y -= (dotSize+border)*1
-                if square == 4:
-                    x += (dotSize+border)*3
-                    y -= (dotSize+border)*1
-                if square == 5:
-                    x += (dotSize+border)*1
-                    # y -= 100
+                y = size - y
                 inde = c
                 c = data[square][c]
                 # print(inde,c[0])
@@ -389,28 +396,37 @@ class Printer():
 
         printerMapper.ExportImages(name,0)
 
-    def new9x9Shuffle(self,index,data,swapIndicies,name):
+    def new9x9Shuffle(self,index,data,swapIndicies,name,backupData=None):
         dotSize = 55
         r = dotSize/2
-        border = 5
+        border = 15
         size = 1024
         printerMapper = PrinterMapper(self.printerMap,(int(size*1.3), size),self.printerNames,self.outDir)
         for square in (0,5):
             for c in range(81):
-                ind = index[square][c//9][c%9]
+                if square == 5:
+                    ind = index[square][c//9][8-(c%9)]
+                else:
+                    ind = index[square][c//9][c%9]
                 x = 20 + r + ind[0] * 8 * (dotSize + border) + 2 * border
                 y = r + ind[1] * 8 * (dotSize + border) + 2 * border
                 y = size - 20 - y
                 if square == 0:
-                    y += 760
-                    x -= 400
+                    y += 920
+                    x -= 600
                 if square == 5:
                     y -= 200
-                    x += 200
+                    x += 50
+                inde = c
                 if c in swapIndicies:
-                    c = data[5-square][c]
+                    c = data[5-square][9*(c//9) + 8 - (c%9)]
+                    if np.isnan(c[0]) and backupData is not None:
+                        # print(backupData)
+                        c = backupData[5-square][9*(inde//9) + 8 - (inde%9)]
                 else:
                     c = data[square][c]
+                    if np.isnan(c[0]) and backupData is not None:
+                        c = backupData[square][inde]
                 # print(inde,c[0])
                 circle = [x - r, y - r, x + r, y + r]
                 # print("circle is",circle)
