@@ -4,7 +4,7 @@ from PIL import Image, ImageDraw, ImageCms, ImageFont
 import packcircles as pc
 import pickle
 # os.environ["IMAGEIO_FFMPEG_EXE"] = "/opt/homebrew/Cellar/ffmpeg/6.0_1/"
-
+font = ImageFont.load_default()
 class PrinterMapper:
     def __init__(self,channelPrinterMap,size,printNames=None, directory = "."):
         self.printCount = len(channelPrinterMap((0,0,0,0,0,0)))
@@ -34,15 +34,29 @@ class PrinterMapper:
             draw = self.printerDraws[self.channel2Printer[i+1]]
             draw.text((text_placement_x + ((i%3)*20), text_placement_y + ((i//3)*10)), f"{str(int(value*100))}," , font=font, fill=(0,0,0,255))
 
+    def DrawText(self, text, text_placement_x, text_placement_y):
+        self.printerDraws[0].text((text_placement_x,text_placement_y),text,font=font,fill=(0,0,0,255))
+
     def DrawEllipse(self, circle, color):
-        if color == None or np.isnan(color[0]):
+        if np.isnan(color[0]):
+            print("printing NAN")
             self.printerDraws[0].ellipse(circle, width=3, fill=(0,0,0,25),outline=(0,0,0,255))
+            return
+        color = [int(c*255) for c in color]
+        colors = self.channelPrinterMap(color)
+        # print(f'colors= {colors}')
+        for i, draw in enumerate(self.printerDraws):
+            draw.ellipse(circle,width=0,fill=colors[i])
+
+    def DrawRect(self, circle, color):
+        if np.isnan(color[0]):
+            self.printerDraws[0].rectangle(circle, width=3, fill=(0,0,0,25),outline=(0,0,0,255))
             return
         color = [int(c*255) for c in color]
         colors = self.channelPrinterMap(color)
         print(f'colors= {colors}')
         for i, draw in enumerate(self.printerDraws):
-            draw.ellipse(circle,width=0,fill=colors[i])
+            draw.rectangle(circle,width=0,fill=colors[i])
     
     def ExportImages(self,name,pageName):
         print(f"printing {name}/{pageName}")
@@ -54,6 +68,8 @@ class PrinterMapper:
             im.save(f'{self.directory}/{name}/print{imName}_page{pageName}.tif')
 
 class Printer():
+    def testFunc():
+        return "hello World"
 
     # a printer map takes a color vector and returns an ordered list of CMYK values to print
     def SIGGRAPH2024printerMap(c):
@@ -70,15 +86,18 @@ class Printer():
 
     sixInkPrinterNames = ["V","T","RC","BM"] # violet turquise red citrus blue maskara
 
-    def __init__(self,printerMap=SIGGRAPH2024printerMap,printerNames=siggraph2024PrinterNames,directory = ".", num_samples = 100, size = 1024, dotSizes = [16,22,28]):
+    def __init__(self,printerMap=SIGGRAPH2024printerMap,printerNames=siggraph2024PrinterNames,directory = ".", num_samples = 100, dotSizes = [16,22,28]):
+        out = f'{directory}/out'
+        os.makedirs(out,exist_ok=True)
         self.directory = directory
+        self.outDir = out
         self.num_samples = num_samples
-        self.size = size
         self.dotSizes = dotSizes
         self.printerMap=printerMap
         self.printerNames = printerNames
 
     def generate_CC_dots(self,secret,seed=0,l=None):
+        size = 1024
         # if not os.path.exists(f'{outdir}/circles.cpkl'):
         def generate_circles():
             # for CC
@@ -91,7 +110,7 @@ class Printer():
             np.random.shuffle(radii)
             circles = pc.pack(radii)
 
-            center = self.size // 2
+            center = size // 2
             l = []
 
             for i, (x,y,radius) in enumerate(circles):
@@ -105,7 +124,7 @@ class Printer():
         if l == None:
             l = generate_circles()
 
-        im = Image.open(f'{self.directory}/secretImages/{secret}.png').resize([self.size,self.size])
+        im = Image.open(f'{self.directory}/secretImages/{secret}.png').resize([size,size])
 
         # given image, inside / outside means numbers / circle background
         image = np.asarray(im)
@@ -132,9 +151,9 @@ class Printer():
                     if np.sqrt(dx**2 + dy**2) <= r:
                         break
 
-                if inside[int(np.clip(np.round(y+dy), 0, self.size-1)), int(np.clip(np.round(x+dx), 0, self.size-1))]:
+                if inside[int(np.clip(np.round(y+dy), 0, size-1)), int(np.clip(np.round(x+dx), 0, size-1))]:
                     inside_values += 1
-                elif outside[int(np.clip(np.round(y+dy), 0, self.size-1)), int(np.clip(np.round(x+dx), 0, self.size-1))]:
+                elif outside[int(np.clip(np.round(y+dy), 0, size-1)), int(np.clip(np.round(x+dx), 0, size-1))]:
                     outside_values += 1
 
             inside_values_for_all_circles.append(inside_values)
@@ -145,11 +164,11 @@ class Printer():
 
     def generate_CC(self,outside, inside, var, secret, trial,noise = 0,gradient=False):
         [inside_values_for_all_circles, outside_values_for_all_circles, rs, l] = self.generate_CC_dots(secret)
-
+        size = 1024
         n = [np.random.random() for _ in range(len(l))]
         name = f'{var}_{secret}'
 
-        printerMapper = PrinterMapper(self.printerMap,size,self.printerNames)
+        printerMapper = PrinterMapper(self.printerMap,(size,size),self.printerNames,self.outDir)
         
         for i, [x,y,r] in enumerate(l):
             # print(r)
@@ -170,7 +189,7 @@ class Printer():
         printerMapper.ExportImages(f'{trial}_{name}_noise_{noise}',0)
 
     def generate_CC_2Image(self,A, B, C, D, var, mainSecret, DistractionSecret, trial,l,noise=0):
-
+        size = 1024
         n = [np.random.random() for _ in range(len(l))]
         name = f'{var}_{mainSecret}_{DistractionSecret}'
 
@@ -179,7 +198,7 @@ class Printer():
         [inside_values_for_all_circles_main, outside_values_for_all_circles_main, rs, l] = self.generate_CC_dots(mainSecret)
         [inside_values_for_all_circles_Distract, outside_values_for_all_circles_Distract, rs, l] = self.generate_CC_dots(DistractionSecret)
 
-        printerMapper = PrinterMapper(self.printerMap,size,self.printerNames)
+        printerMapper = PrinterMapper(self.printerMap,size,self.printerNames,self.outDir)
         
         for i, [x,y,r] in enumerate(l):
             # print(r)
@@ -218,59 +237,79 @@ class Printer():
         print("yi=",yi)
         return y*(x*a + xi*b) + yi*(x*c + xi*d)
 
-    def CIJKtoCMYIJK(c):
+    def CIJKtoCMYIJK(self,c):
         return [c[0]] + [0,0] + c[1:]
 
-    def div100(list):
+    def div100(self,list):
         return [x/100 for x in list]
 
-    def toList(list):
+    def toList(self,list):
         return [c.tolist() for c in list]
 
-    def depair(list):
+    def depair(self,list):
         out = []
         for pair in list:
             out += [pair[0],pair[1]]
         return out
 
-    def CPVY2CMYIJK(cpvy):
+    def CPVY2CMYIJK(self,cpvy):
         return (cpvy[0],0,0,cpvy[1],cpvy[2],cpvy[3])
 
-    def generateMultiPageDotList(self,colors,name="custom",maxX=None,biggestDots=False,xB=0,yB=0,perPage=None):
+    def generateMultiPageDotList(self,colors,name="custom",manualDotSize=None,customLabels=None,rect=False,maxX=None,biggestDots=False,xB=0,yB=0,perPage=None):
         fullLength = len(colors)
         splitColorList = [colors[i*perPage:(i+1)*perPage] for i in range((fullLength//perPage)+1)]
         print("!")
+        processed = 0
         for pageNum, colorList in enumerate(splitColorList):
             print("!!")
-            self.generateDotList(colorList,name,maxX,biggestDots,xB,yB,pageNum,printerMap=self.printermap,printerNames=self.printerNames)
+            if customLabels:
+                labels = customLabels[processed:processed+len(colorList)]
+            else:
+                labels = None
+            self.generateDotList(colorList,name,manualDotSize,labels,rect,maxX,biggestDots,xB,yB,pageNum)
+            processed += len(colorList)
 
-    def generateDotList(self,colors,name="custom",maxX=None,biggestDots=False,xB=0,yB=0,pageName=""):
+    def generateDotList(self,colors,name="custom",manualDotSize=None,customLabels=None,rect=False,maxX=None,biggestDots=False,xB=0,yB=0,pageName=""):
+        size = 1024
+        dotSize = 95
+        r = dotSize//2
+        border = 20
         if maxX == None:
             maxX = int((size-(4*border))/(dotSize + border))
             maxX -= maxX%2
         elif biggestDots:
             dotSize = (size//maxX)-border
             r = dotSize/2
-        printerMapper = PrinterMapper(self.printerMap,(int(size*1.05), int(size*1.35)),self.printerNames)
+        if manualDotSize:
+            dotSize = manualDotSize
+            maxX = int((size-(4*border))/(dotSize + border))
+        printerMapper = PrinterMapper(self.printerMap,(int(size*1.05), int(size*1.35)),self.printerNames,self.outDir)
         for i in range(len(colors)):
             x_mini = i%maxX
             y_mini = i//maxX
             x = xB + r + x_mini * (dotSize + border) + 2 * border
             y = yB + r + y_mini * (dotSize + border + 30) + 2 * border
+            # y = yB + r + y_mini * (dotSize + border) + 2 * border
             c = colors[i]
             print(c)
             text_placement_x = x - r + 15
             text_placement_y = y + r + border / 2 - 5
-
-            printerMapper.DrawLabel(c,text_placement_x,text_placement_y)
+            
+            if customLabels:
+                printerMapper.DrawText(customLabels[i],text_placement_x,text_placement_y)
+            else:
+                printerMapper.DrawLabel(c,text_placement_x,text_placement_y)
 
             circle = [x - r, y - r, x + r, y + r]
-            printerMapper.DrawEllipse(circle,c)
+            if rect:
+                printerMapper.DrawRect(circle,c)
+            else:
+                printerMapper.DrawEllipse(circle,c)
     
         printerMapper.ExportImages(name,pageName)
 
     #TODO: link this with the cubemap functions, old code:
-    # file_path = "/Users/frackfrick/Desktop/SchoolStuff/Research/Archive7/measured_2.999849055699836_9x9sampleperecentages.npy"
+    # file_path = "/Users/frackfrick/Desktop/SchoolStuff/compColor/25lamy_percentages.npy"
     # sphere_path = "/Users/frackfrick/Desktop/SchoolStuff/Research/spherical_coordinates_of_cubemap.npy"
     # index_path = "/Users/frackfrick/Desktop/SchoolStuff/Research/9x9_idx_into_cubemap.npy"
     # # irgb_path = "/Users/frackfrick/Desktop/SchoolStuff/Research/Archive6/ideal_2.999849055699836_9x9samplesRGBs.npy"
@@ -283,43 +322,123 @@ class Printer():
     # index = np.load(index_path)
     # irgb = np.load(irgb_path)
     # reflectance = np.load(reflect_path)
-    def newGrid(self,index,data,name):
-        printerMapper = PrinterMapper(self.printerMap,(int(size*1.2), size),self.printerNames)
-
+    def new9x9Grid(self,index,data,name):
+        dotSize = 30
+        r = dotSize/2
+        border = 10
+        size = 1024
+        printerMapper = PrinterMapper(self.printerMap,(int(size*1.3), size),self.printerNames,self.outDir)
         for square in range(6):
             for c in range(81):
                 ind = index[square][c//9][c%9]
-                x = 0 + r + ind[0] * 8 * (dotSize + border) + 2 * border
-                y = -100 + r + ind[1] * 8 * (dotSize + border) + 2 * border
-                y = 2300 - y
-                if square == 0:
-                    y -= (dotSize+border)*2
-                    x += (dotSize+border)*1
-                if square == 1:
-                    y -= (dotSize+border)*1
-                if square == 2:
-                    x += (dotSize+border)*1
-                    y -= (dotSize+border)*1
-                if square == 3:
-                    x += (dotSize+border)*2
-                    y -= (dotSize+border)*1
-                if square == 4:
-                    x += (dotSize+border)*3
-                    y -= (dotSize+border)*1
-                if square == 5:
-                    x += (dotSize+border)*1
-                    # y -= 100
+                x = r + ind[0] * 8 * (dotSize + border) + 2 * border
+                y = r + ind[1] * 8 * (dotSize + border) + 2 * border
+                y = size - y
                 inde = c
                 c = data[square][c]
-                c = (c[0],0,0,c[1],c[2],c[3])
                 # print(inde,c[0])
                 circle = [x - r, y - r, x + r, y + r]
+                # print("circle is",circle)
                 printerMapper.DrawEllipse(circle,c)
 
-        printerMapper.ExportImages(name)
+        printerMapper.ExportImages(name,0)
+
+    def newGeneralGrid(self,index,data,name,dotSize=30,border=10,labels=False,backupData=None):
+        r = dotSize/2
+        size = 1024
+        sideLen = len(index[0])
+        printerMapper = PrinterMapper(self.printerMap,(int(size*1.3), size),self.printerNames,self.outDir)
+        for square in range(6):
+            for c in range(sideLen**2):
+                ind = index[square][c//sideLen][c%sideLen]
+                x = r + ind[0] * (sideLen-1) * (dotSize + border) + 2 * border
+                y = r + ind[1] * (sideLen-1) * (dotSize + border) + 2 * border
+                y = size - y
+                inde = c
+                c = data[square][c]
+                if np.isnan(c[0]) and backupData is not None:
+                    c = backupData[square][inde]
+                # print(inde,c[0])
+                circle = [x - r, y - r, x + r, y + r]
+                # print("circle is",circle)
+                if not labels:
+                    printerMapper.DrawEllipse(circle,c)
+                else:
+                    printerMapper.DrawText(f"({square},{inde})",x,y)
+
+        printerMapper.ExportImages(name,0)
+
+    def new5x5Grid(self,index,data,name,doRect=False):
+        dotSize = 55
+        r = dotSize/2
+        border = 5
+        size = 1024
+        printerMapper = PrinterMapper(self.printerMap,(int(size*1.3), size),self.printerNames,self.outDir)
+        for square in range(6):
+            for c in range(25):
+                row = (c//5)*2
+                col = (c%5)*2
+                c = 9*row + col
+                # ind = index[square][(c//5)*2][(c%5)*2]
+                ind = index[square][c//9][c%9]
+                x = r + ind[0] * 8 * (dotSize/2 + border) + 2 * border
+                y = r + ind[1] * 8 * (dotSize/2 + border) + 2 * border
+                y = size - y
+                inde = c
+                c = data[square][c]
+                # print(inde,c[0])
+                circle = [x - r, y - r, x + r, y + r]
+                # print("circle is",circle)
+                if doRect:
+                    printerMapper.DrawRect(circle,c)
+                else:
+                    printerMapper.DrawEllipse(circle,c)
+
+        printerMapper.ExportImages(name,0)
+
+    def new9x9Shuffle(self,index,data,swapIndicies,name,backupData=None):
+        dotSize = 55
+        r = dotSize/2
+        border = 15
+        size = 1024
+        printerMapper = PrinterMapper(self.printerMap,(int(size*1.3), size),self.printerNames,self.outDir)
+        for square in (0,5):
+            for c in range(81):
+                if square == 5:
+                    ind = index[square][c//9][8-(c%9)]
+                else:
+                    ind = index[square][c//9][c%9]
+                x = 20 + r + ind[0] * 8 * (dotSize + border) + 2 * border
+                y = r + ind[1] * 8 * (dotSize + border) + 2 * border
+                y = size - 20 - y
+                if square == 0:
+                    y += 920
+                    x -= 600
+                if square == 5:
+                    y -= 200
+                    x += 50
+                inde = c
+                if c in swapIndicies:
+                    c = data[5-square][9*(c//9) + 8 - (c%9)]
+                    if np.isnan(c[0]) and backupData is not None:
+                        # print(backupData)
+                        c = backupData[5-square][9*(inde//9) + 8 - (inde%9)]
+                else:
+                    c = data[square][c]
+                    if np.isnan(c[0]) and backupData is not None:
+                        c = backupData[square][inde]
+                # print(inde,c[0])
+                circle = [x - r, y - r, x + r, y + r]
+                # print("circle is",circle)
+                printerMapper.DrawEllipse(circle,c)
+
+        printerMapper.ExportImages(name,0)
 
     def newRGBGrid(self,index,irgb):
-        size = 3000
+        size = 1024
+        dotSize = 20
+        r = dotSize/2
+        border = 20
         im_CMY = Image.new('RGB', (int(size*1.2), size),color=(255,255,255,255))
         dr_CMY = ImageDraw.Draw(im_CMY)
         part = 0
@@ -373,12 +492,6 @@ class Printer():
                 dr_CMY.ellipse(circle, width=w, fill=_cmy,outline=(0,0,0,255))
         im_CMY.save(f'./SuperNewcustomRGB.png')
 
-    def SixPageGrid(self):
-        for square in range(6):
-            colorList = [CPVY2CMYIJK(data[square][c]) for c in range(81)]
-            print("square",square,"list",colorList)
-            self.generateDotList(colorList,f"Square{square}_",9,True)
-
 # default = ImageFont.load_default()
 # font = default
 
@@ -393,4 +506,37 @@ class Printer():
 
 # gridSize = r + 9 * (dotSize + border) + 2 * border
 
+p = Printer(directory="./chromalab")
+
+# testDict = {
+#     "A": ([25,32,47,85],[37,90,2,50],'87'), #downstairs
+#     "B": ([27,2,57,85],[42,95,2,17],'85'),
+#     "C": ([30,22,50,90],[42,95,0,52],'73'),
+#     "D": ([30,25,47,90],[37,90,2,50],'27'), #2850k
+#     "E": ([27,15,52,82],[40,87,0,25],'39'),
+#     "F": ([30,7,52,95],[40,97,0,50],'68'),
+#     "G": ([30,17,50,92],[37,90,2,62],'96'), #4800k
+#     "H": ([30,17,50,92],[37,92,2,65],'72'),
+#     "I": ([32,17,50,80],[40,87,0,25],'35'),
+#     "J": ([30,17,50,92],[37,90,2,62],'67'), #6500k
+#     "K": ([30,22,50,90],[37,90,2,50],'64'),
+#     "L": ([27,7,55,85],[40,87,0,45],'89'),
+# }
+
+# for t in testDict.keys():
+#     inside,outside,secret = testDict[t]
+#     print(inside)
+#     inside = p.CIJKtoCMYIJK(p.div100(inside))
+#     outside = p.CIJKtoCMYIJK(p.div100(outside))
+#     p.generate_CC(inside,outside,0,secret,t,True)
+
+# l=[]
+# for c in range(2):
+#     for m in range(2):
+#         for y in range(2):
+#             for i in range(2):
+#                 for j in range(2):
+#                     for k in range(2):
+#                         l += [[c,m,y,i,j,k]]
+# p.generateDotList(l)
 
