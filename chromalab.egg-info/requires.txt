@@ -1,0 +1,14 @@
+opencv-python
+numpy
+packcircles
+pillow~=10.3
+setuptools
+matplotlib
+tqdm
+scikit-learn
+pandas
+scipy
+jupyter
+open3d
+polyscope
+alphashape
