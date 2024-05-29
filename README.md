@@ -193,7 +193,7 @@ Details on how to print these images and care for the printers are stored in the
 
 Install requirements first by making a conda enviornnment with python 3.11 `conda create -n chromalab python=3.11`, and then install packages with `pip install -r requirements`. Then, install the library while making it editable by with the `-e`. 
 ```
-pip install -e /path/to/chromalab
+pip install -e /path/to/ChromaLab
 ```
 
 From there, to edit with the jupyter notebook.
