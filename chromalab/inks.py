@@ -253,21 +253,20 @@ def find_best_n(primaries_dict, percentages: npt.NDArray, actual: Spectra):
     # Find best n array for a particular sample
     wavelengths = actual.wavelengths
 
-    best_n = np.ones_like(wavelengths)
-    errors = np.ones_like(wavelengths)
+    best_n = None
+    best_error = float('inf')
 
-    candidates = np.logspace(-1, 1, num=10, base=10)
+    candidates = np.logspace(-2, 2, num=100, base=10)
     # print(candidates)
     # inefficient but idc
     for n in candidates:
         neug_n = Neugebauer(primaries_dict, n=n)
         result = neug_n.mix(percentages).reshape(-1)
-        for i, (a, b) in enumerate(zip(result, actual.data)):
-            error = (b-a) ** 2
+        error = np.sum(np.square((actual.data - result)))
+        if error < best_error:
+            best_n = n
+            best_error = error
 
-            if error < errors[i]:
-                errors[i] = error
-                best_n[i] = n
     return best_n
 
 
@@ -531,7 +530,7 @@ class CellNeugebauer:
             weights.append(key)
             spectras.append(spectra)
 
-        self.num_inks = int(math.log(len(primaries_dict), 3))
+        self.num_inks = round(math.log(len(primaries_dict), 3))
         self.wavelengths = list(primaries_dict.values())[0].wavelengths
 
         self.n = n
@@ -571,7 +570,7 @@ class Neugebauer:
         self.wavelengths = list(primaries_dict.values())[0].wavelengths
         self.weights_array = np.array(weights)
         self.spectras_array = np.power(np.array(spectras), 1.0 / n)
-        self.num_inks = int(math.log(self.weights_array.shape[0], 2))
+        self.num_inks = round(math.log(self.weights_array.shape[0], 2))
 
         if isinstance(n, np.ndarray):
             assert len(n) == len(self.wavelengths)
@@ -663,10 +662,7 @@ class InkGamut:
         for first in iterator:
             yield np.array(list(islice(chain([first], iterator), batch_size - 1)))
 
-    def get_spectral_point_cloud(self, observe: Union[Observer, npt.NDArray],
-                        stepsize=0.1, grid: Optional[npt.NDArray] = None, verbose=True, batch_size=1e5):
-        if isinstance(observe, Observer):
-            observe = observe.get_sensor_matrix(wavelengths=self.wavelengths)
+    def get_spectral_point_cloud(self,stepsize=0.1, grid: Optional[npt.NDArray] = None, verbose=True, batch_size=1e5):
 
         point_cloud = []
         _percentages = []
@@ -684,7 +680,7 @@ class InkGamut:
         if isinstance(self.neugebauer, CellNeugebauer):
             for index, neugebauer in self.neugebauer.subcubes.items():
                 subgamut = InkGamut(neugebauer, illuminant=self.illuminant)
-                pc, perc = subgamut.get_spectral_point_cloud(observe, stepsize=stepsize * 2, grid=None, verbose=verbose, batch_size=batch_size)
+                pc, perc = subgamut.get_spectral_point_cloud(stepsize=stepsize * 2, grid=None, verbose=verbose, batch_size=batch_size)
                 point_cloud.append(pc)
                 _percentages.append(perc / 2 + np.array(index) / 2)
 
@@ -724,6 +720,7 @@ class InkGamut:
         verbose_progress = (lambda x: tqdm(x, total=int(total_combinations / batch_size), desc=desc)) if verbose else (lambda x: x)
 
         if isinstance(self.neugebauer, CellNeugebauer):
+            
             for index, neugebauer in self.neugebauer.subcubes.items():
                 subgamut = InkGamut(neugebauer, illuminant=self.illuminant)
                 pc, perc = subgamut.get_point_cloud(observe, stepsize=stepsize * 2, grid=None, verbose=verbose, batch_size=batch_size)
