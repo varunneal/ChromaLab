@@ -1,0 +1,18 @@
+Metadata-Version: 2.1
+Name: chromalab
+Version: 0.3
+Summary: Library for cone fundamentals and printer math.
+Requires-Dist: opencv-python
+Requires-Dist: numpy
+Requires-Dist: packcircles
+Requires-Dist: pillow~=10.3
+Requires-Dist: setuptools
+Requires-Dist: matplotlib
+Requires-Dist: tqdm
+Requires-Dist: scikit-learn
+Requires-Dist: pandas
+Requires-Dist: scipy
+Requires-Dist: jupyter
+Requires-Dist: open3d
+Requires-Dist: polyscope
+Requires-Dist: alphashape
