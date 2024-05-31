@@ -1,135 +1,24 @@
 import heapq
-from itertools import combinations, chain
-from time import time, perf_counter
-from typing import List, Union, Optional, Dict
+import math
+from collections import defaultdict
+from itertools import chain
+from itertools import islice, combinations
+from itertools import product
+from typing import Tuple, List
+from typing import Union, Optional, Dict
 
-import matplotlib.pyplot as plt
-import networkx as nx
 import numpy as np
 import numpy.typing as npt
-from itertools import product, islice, combinations
-
-
-from typing import Tuple, Iterable, List
-from tqdm import tqdm
-from itertools import product
-
-from collections import defaultdict
-import math
-
-from .spectra import Spectra
-from .observer import Observer
-
-from sklearn.decomposition import PCA, TruncatedSVD
-from scipy.special import comb
 from scipy.spatial import ConvexHull
+from scipy.special import comb
+from sklearn.decomposition import PCA, TruncatedSVD
+from tqdm import tqdm
+
+from .observer import Observer
+from .spectra import Spectra
 
 
-class Pigment(Spectra):
-    # TODO: reformat with kwargs
-    def __init__(self, array: Optional[Union[Spectra, npt.NDArray]] = None,
-                 k: Optional[npt.NDArray] = None,
-                 s: Optional[npt.NDArray] = None,
-                 wavelengths: Optional[npt.NDArray] = None,
-                 data: Optional[npt.NDArray] = None, **kwargs):
-        """
-        Either pass in @param reflectance or pass in
-        @param k and @param s.
-
-        k and s are stored as spectra rather than NDArrays.
-        """
-        if k is not None and s is not None and wavelengths is not None:
-            # compute reflectance from k & s
-            if not k.shape == s.shape or not k.shape == wavelengths.shape:
-                raise ValueError("Coefficients k and s and wavelengths must be same shape.")
-
-            r = 1 + (k / s) - np.sqrt(np.square(k / s) + (2 * k / s))
-            super().__init__(wavelengths=wavelengths, data=r, **kwargs)
-
-        elif array is not None:
-            if isinstance(array, Spectra):
-                super().__init__(**array.__dict__, **kwargs)
-            else:
-                super().__init__(array=array, wavelengths=wavelengths, data=data, **kwargs)
-            k, s = self.compute_k_s()
-        elif data is not None:
-            super().__init__(wavelengths=wavelengths, data=data, **kwargs)
-
-        else:
-            raise ValueError("Must either specify reflectance or k and s coefficients and wavelengths.")
-
-        self.k, self.s = k, s
-
-    def compute_k_s(self) -> Tuple[npt.NDArray, npt.NDArray]:
-        # Walowit · 1987 specifies this least squares method
-        # todo: GJK method as per Centore • 2015
-        array = np.clip(self.array(), 1e-4, 1)
-        k, s = [], []
-        for wavelength, r in array:
-            k_over_s = (1 - r) * (1 - r) / (2 * r)
-            A = np.array([[-1, k_over_s], [1, 1]])
-            b = np.array([0, 1])
-
-            AtA_inv = np.linalg.inv(np.dot(A.T, A))
-            Atb = np.dot(A.T, b)
-
-            _k, _s = np.dot(AtA_inv, Atb)
-            k.append(_k)
-            s.append(_s)
-
-        return np.clip(np.array(k), 0, 1), np.clip(np.array(s), 0, 1)
-
-    def get_k_s(self) -> Tuple[npt.NDArray, npt.NDArray]:
-        # todo: pass in wavelength list for interpolation/sampling consistency with mixing
-        return self.k, self.s
-
-
-def get_metamers(points, target, threshold=1e-2, axis=2):
-    # ok the idea here is to find a point in points
-    # that is a confusion point wrt target
-    metamers = []
-    for idx, point in enumerate(points):
-        # print(point)
-        metamer_closeness = math.sqrt(
-                sum(
-                    [
-                (point[i] - target[i]) ** 2
-            for i in range(len(point)) if i != axis])
-        )
-        if metamer_closeness < threshold:
-            metamers.append((abs(target[axis] - point[axis]), idx))
-    metamers.sort(reverse=True)
-    return metamers
-
-
-def lsh_buckets(points, ignored_axis=2):
-    # Implementation of Locally Sensitive Hashing
-    print(points.shape)
-    n_dimensions = points.shape[1]
-
-    weights = np.zeros(n_dimensions)
-    for i in range(n_dimensions):
-        if i != ignored_axis:
-            weights[i] = 10 ** (2 * (i + 1))
-
-    weights = np.zeros(n_dimensions)
-    adjustments = []
-    for i in range(n_dimensions):
-        if i != ignored_axis:
-            weights[i] = 10 ** (2 * (i + 1))
-            exp_base = 10 ** (2 * (i + 1)) // 2
-            adjustments.extend([exp_base, -exp_base])
-
-    # Calculate base hash values excluding the ignored axis
-    base_hashes = np.dot(points, weights)
-
-    # Apply adjustments and calculate hash values
-    hash_values = np.array([np.floor(base_hashes + adjustment).astype(int) for adjustment in adjustments])
-
-    return hash_values
-
-
-def bucket_points(points: npt.NDArray , axis=2):
+def bucket_points(points: npt.NDArray, axis=2):
     # disjointed buckets
     buckets = defaultdict(list)
     N, d = points.shape
@@ -169,10 +58,6 @@ def sort_buckets(buckets, axis=2) -> List:
         dist_buckets.append((distance, best_indices))
 
     return sorted(dist_buckets, reverse=True)
-
-
-def max_dist(buckets, axis=2):
-    return sort_buckets(buckets, axis=axis)[0]
 
 
 def k_s_from_data(data: npt.NDArray):
@@ -249,7 +134,8 @@ def observe_spectras(spectras: npt.NDArray, observer: npt.NDArray, illuminant: n
     result = np.divide(numerator, denominator[:, np.newaxis])
     return result.T
 
-def find_best_n(primaries_dict, percentages: npt.NDArray, actual: Spectra):
+
+def find_best_n(primaries_dict, percentages: npt.NDArray, actual: Spectra, cellular=False):
     # Find best n array for a particular sample
     wavelengths = actual.wavelengths
 
@@ -261,6 +147,8 @@ def find_best_n(primaries_dict, percentages: npt.NDArray, actual: Spectra):
     # inefficient but idc
     for n in candidates:
         neug_n = Neugebauer(primaries_dict, n=n)
+        if cellular:
+            neug_n = CellNeugebauer(primaries_dict, n=n)
         result = neug_n.mix(percentages).reshape(-1)
         error = np.sum(np.square((actual.data - result)))
         if error < best_error:
@@ -270,247 +158,6 @@ def find_best_n(primaries_dict, percentages: npt.NDArray, actual: Spectra):
     return best_n
 
 
-def find_best_ns(primaries_dict, samples_dict):
-    # samples dict will need to be (Tuple, Spectra) pairs
-    best_ns = []
-
-    for percentage, actual in samples_dict.items():
-        best_n = find_best_n(primaries_dict, np.array(percentage), actual)
-        best_ns.append(best_n)
-
-    return best_ns
-
-
-class InkLibrary:
-    """
-    InkLibrary is a class equipped with a method for "fast ink gamut search". It uses PCA to identify
-    the best k-ink set from a larger library.
-    """
-    def __init__(self, library: Dict[str, Spectra], paper: Spectra):
-        self.names = list(library.keys())
-        spectras = list(library.values())
-        self.wavelengths = spectras[0].wavelengths
-        self.spectras = np.array([s.data for s in spectras])
-        self.K = len(self.names)
-        for s in spectras:
-            assert np.array_equal(s.wavelengths, self.wavelengths)
-        assert np.array_equal(self.wavelengths, paper.wavelengths)
-        self.paper = paper.data
-
-    def distance_search(self, observe: Union[Observer, npt.NDArray],
-                          illuminant: Union[Spectra, npt.NDArray], top=100, k=None, stepsize=0.1):
-        # slow unoptimized method, finds max q distance along point cloud
-        if isinstance(observe, Observer):
-            observe = observe.get_sensor_matrix(self.wavelengths)
-        if k is None:
-            print(type(observe))
-            k = observe.shape[0]
-
-        top_scores = []
-        for inkset_idx in tqdm(combinations(range(self.K), k), total=comb(self.K, k), desc="finding best inkset"):
-            names = [self.names[i] for i in inkset_idx]
-
-            spectras = [Spectra(wavelengths=self.wavelengths, data=self.spectras[idx]) for idx in inkset_idx]
-
-            gamut = InkGamut(spectras, Spectra(wavelengths=self.wavelengths, data=self.paper), illuminant)
-            score = gamut.get_width(observe, stepsize=stepsize, verbose=False)
-            if len(top_scores) < top:
-                heapq.heappush(top_scores, (score, names))
-            else:
-                if score > top_scores[0][0]:
-                    heapq.heapreplace(top_scores, (score, names))
-        return sorted(top_scores, reverse=True)
-
-
-
-    def convex_hull_search(self, observe: Union[Observer, npt.NDArray],
-                          illuminant: Union[Spectra, npt.NDArray], top=100, k=None):
-        # super efficient way to find best k-ink subset of large K ink library
-        if isinstance(observe, Observer):
-            observe = observe.get_sensor_matrix(self.wavelengths)
-        if isinstance(illuminant, Spectra):
-            illuminant = illuminant.interpolate_values(self.wavelengths).data
-        if k is None:
-            k = observe.shape[0]
-
-        km_cache = {}
-
-        total_iterations = sum(comb(self.K, i) for i in range(2, k + 1))
-
-        ks_cache = []
-        for ink in self.spectras:
-            ks_cache.append(np.stack(k_s_from_data(ink)))
-
-        with tqdm(total=total_iterations, desc="loading km cache") as pbar:
-            for i in range(2, k + 1):
-                concentrations = np.ones(i) / i
-                for subset in combinations(range(self.K), i):
-                    inks_to_mix = [ks_cache[idx] for idx in subset]
-                    ks_batch = np.stack(inks_to_mix, axis=2)
-                    ks_mix = ks_batch @ concentrations
-                    data = data_from_k_s(ks_mix[0], ks_mix[1])
-                    km_cache[subset] = data.astype(np.float16)
-                    pbar.update(1)
-
-        del ks_cache
-
-        denominator = np.matmul(observe, illuminant.T)[:, np.newaxis]
-
-        top_scores = []
-        for inkset_idx in tqdm(combinations(range(self.K), k), total=comb(self.K, k), desc="finding best inkset"):
-            names = [self.names[i] for i in inkset_idx]
-
-            primaries_array = [self.paper]
-            primaries_array.extend([self.spectras[idx] for idx in inkset_idx])
-            primaries_array.extend(
-                [km_cache[subset] for i in range(2, k + 1) for subset in combinations(inkset_idx, i)])
-
-            primaries_array = np.array(primaries_array)
-
-            numerator = np.matmul(observe, (primaries_array * illuminant).T)
-            observe_mix = np.divide(numerator, denominator) # 4 x 16
-            vol = ConvexHull(observe_mix.T).volume
-
-            if len(top_scores) < top:
-                heapq.heappush(top_scores, (vol, names))
-            else:
-                if vol > top_scores[0][0]:
-                    heapq.heapreplace(top_scores, (vol, names))
-
-        return  sorted(top_scores, reverse=True)
-
-
-
-    def cached_pca_search(self, observe: Union[Observer, npt.NDArray],
-                          illuminant: Union[Spectra, npt.NDArray], top=50, k=None):
-        # super efficient way to find best k-ink subset of large K ink library
-        if isinstance(observe, Observer):
-            observe = observe.get_sensor_matrix(self.wavelengths)
-        if isinstance(illuminant, Spectra):
-            illuminant = illuminant.interpolate_values(self.wavelengths).data
-        if k is None:
-            k = observe.shape[0]
-
-        km_cache = {}
-        # Populate cache
-        total_iterations = sum(comb(self.K, i) for i in range(2, k + 1))
-
-        top_scores = []
-
-        with tqdm(total=total_iterations, desc="loading km cache") as pbar:
-            ks_cache = []
-            for ink in self.spectras:
-                ks_cache.append(np.stack(k_s_from_data(ink)))
-
-            for i in range(2, k + 1):
-                concentrations = np.ones(i) / i
-                for subset in combinations(range(self.K), i):
-                    inks_to_mix = [ks_cache[idx] for idx in subset]
-                    ks_batch = np.stack(inks_to_mix, axis=2)
-                    ks_mix = ks_batch @ concentrations
-                    data = data_from_k_s(ks_mix[0], ks_mix[1])
-                    km_cache[subset] = data.astype(np.float16)
-                    pbar.update(1)
-
-            del ks_cache
-
-        weights_array = []
-        for i in range(k+1):
-            for subset in combinations(range(k), i):
-                binary = [0] * k
-                for index in subset:
-                    binary[index] = 1
-                weights_array.append(binary)
-        weights_array = np.array(weights_array)
-
-        # nothing
-        top_scores = []
-
-        stepsize = 0.2
-        values = np.arange(0, 1 + stepsize, stepsize)
-        mesh = np.meshgrid(*([values] * k))
-        grid = np.stack(mesh, axis=-1).reshape(-1, k)
-
-        w_p = ((weights_array * grid[:, np.newaxis, :]) +
-               (1 - weights_array) * (1 - grid[:, np.newaxis, :]))
-        w_p_prod = np.prod(w_p, axis=2, keepdims=True)
-
-        pca = PCA(n_components=observe.shape[0])
-        tsvd = TruncatedSVD(n_components=observe.shape[0], n_iter=5, random_state=42)
-
-        denominator = np.matmul(observe, illuminant.T)[:, np.newaxis]
-
-        inkset_iteration_tt = 0
-        # Find best inkset
-        iters = 0
-        for inkset_idx in tqdm(combinations(range(self.K), k), total=comb(self.K, k), desc="finding best inkset"):
-
-            names = [self.names[i] for i in inkset_idx]
-
-            primaries_array = [self.paper]
-            primaries_array.extend([self.spectras[idx] for idx in inkset_idx])
-            primaries_array.extend(
-                [km_cache[subset] for i in range(2, k + 1) for subset in combinations(inkset_idx, i)])
-
-            primaries_array = np.array(primaries_array)
-            data_array = np.power(primaries_array, 1.0 / 50)
-
-
-
-            mix = np.power(np.matmul(w_p_prod.transpose(0, 2, 1), data_array), 50).squeeze(axis=1)
-
-            numerator = np.matmul(observe, (mix * illuminant).T)
-            observe_mix = np.divide(numerator, denominator)
-            pca.fit(observe_mix)
-            score = np.sqrt(pca.explained_variance_)[-1]
-
-
-            if len(top_scores) < top:
-                heapq.heappush(top_scores, (score, names))
-            else:
-                if score > top_scores[0][0]:
-                    heapq.heapreplace(top_scores, (score, names))
-
-            iters += 1
-            if iters > 1000:
-                print("pca iteration", inkset_iteration_tt / iters, "seconds")
-
-                return
-
-        return sorted(top_scores, reverse=True)
-
-
-class FastNeugebauer:
-    def __init__(self, weights_array, data_array, num_inks):
-        self.weights_array = weights_array
-        self.data_array = np.power(data_array, 1.0 / 50)
-        self.num_inks = num_inks
-
-
-    def batch_mix(self, percentages: npt.NDArray) -> npt.NDArray:
-        w_p = ((self.weights_array * percentages[:, np.newaxis, :]) +
-               (1 - self.weights_array) * (1 - percentages[:, np.newaxis, :]))
-        w_p_prod = np.prod(w_p, axis=2, keepdims=True)
-
-        result = np.power(np.matmul(w_p_prod.transpose(0, 2, 1), self.data_array), 50).squeeze(axis=1)
-
-        return result
-
-    def batch_observe(self, percentages: npt.NDArray, observer: npt.NDArray, illuminant: npt.NDArray):
-        spectras = self.batch_mix(percentages)
-        numerator = np.matmul(observer, (spectras * illuminant).T)
-        denominator = np.matmul(observer, illuminant.T)
-        result = np.divide(numerator, denominator[:, np.newaxis])
-        return result.T
-
-    def get_pca_size(self, grid, observe: npt.NDArray, illuminant: npt.NDArray):
-        stimulus = self.batch_observe(grid, observe, illuminant)
-
-        pca = PCA(n_components=observe.shape[0])
-
-        pca.fit(stimulus)
-
-        return np.sqrt(pca.explained_variance_)[-1]
 
 
 class CellNeugebauer:
@@ -646,7 +293,6 @@ class InkGamut:
 
         self.neugebauer = load_neugebauer(inks, paper)  # KM interpolation
 
-
     def get_spectra(self, percentages: Union[List, npt.NDArray], clip=False):
         if not isinstance(percentages, np.ndarray):
             percentages = np.array(percentages)
@@ -655,14 +301,13 @@ class InkGamut:
             data = np.clip(data, 0, 1)
         return Spectra(data=data, wavelengths=self.wavelengths)
 
-
     def batch_generator(self, iterable, batch_size):
         """Utility function to generate batches from an iterable."""
         iterator = iter(iterable)
         for first in iterator:
             yield np.array(list(islice(chain([first], iterator), batch_size - 1)))
 
-    def get_spectral_point_cloud(self,stepsize=0.1, grid: Optional[npt.NDArray] = None, verbose=True, batch_size=1e5):
+    def get_spectral_point_cloud(self, stepsize=0.1, grid: Optional[npt.NDArray] = None, verbose=True, batch_size=1e5):
 
         point_cloud = []
         _percentages = []
@@ -675,12 +320,14 @@ class InkGamut:
             total_combinations = grid.shape[0]
 
         desc = "Generating point cloud"
-        verbose_progress = (lambda x: tqdm(x, total=int(total_combinations / batch_size), desc=desc)) if verbose else (lambda x: x)
+        verbose_progress = (lambda x: tqdm(x, total=int(total_combinations / batch_size), desc=desc)) if verbose else (
+            lambda x: x)
 
         if isinstance(self.neugebauer, CellNeugebauer):
             for index, neugebauer in self.neugebauer.subcubes.items():
                 subgamut = InkGamut(neugebauer, illuminant=self.illuminant)
-                pc, perc = subgamut.get_spectral_point_cloud(stepsize=stepsize * 2, grid=None, verbose=verbose, batch_size=batch_size)
+                pc, perc = subgamut.get_spectral_point_cloud(stepsize=stepsize * 2, grid=None, verbose=verbose,
+                                                             batch_size=batch_size)
                 point_cloud.append(pc)
                 _percentages.append(perc / 2 + np.array(index) / 2)
 
@@ -717,13 +364,15 @@ class InkGamut:
             total_combinations = grid.shape[0]
 
         desc = "Generating point cloud"
-        verbose_progress = (lambda x: tqdm(x, total=int(total_combinations / batch_size), desc=desc)) if verbose else (lambda x: x)
+        verbose_progress = (lambda x: tqdm(x, total=int(total_combinations / batch_size), desc=desc)) if verbose else (
+            lambda x: x)
 
         if isinstance(self.neugebauer, CellNeugebauer):
-            
+
             for index, neugebauer in self.neugebauer.subcubes.items():
                 subgamut = InkGamut(neugebauer, illuminant=self.illuminant)
-                pc, perc = subgamut.get_point_cloud(observe, stepsize=stepsize * 2, grid=None, verbose=verbose, batch_size=batch_size)
+                pc, perc = subgamut.get_point_cloud(observe, stepsize=stepsize * 2, grid=None, verbose=verbose,
+                                                    batch_size=batch_size)
                 point_cloud.append(pc)
                 _percentages.append(perc / 2 + np.array(index) / 2)
 
@@ -744,9 +393,8 @@ class InkGamut:
 
         return point_cloud, _percentages
 
-
     def get_buckets(self, observe: Union[Observer, npt.NDArray],
-                  axis=2, stepsize=0.1, verbose=True, save=False):
+                    axis=2, stepsize=0.1, verbose=True, save=False):
         point_cloud, percentages = self.get_point_cloud(observe, stepsize, verbose=verbose)
         if verbose: print("Point cloud generated.")
 
@@ -773,11 +421,10 @@ class InkGamut:
 
         return np.sqrt(pca.explained_variance_)[-1]
 
-
-
     def get_width(self, observe: Union[Observer, npt.NDArray],
                   axis=2, stepsize=0.1, verbose=True, save=False, refined=0):
-        percentages = self.get_buckets(observe, axis=axis, stepsize=stepsize, verbose=verbose, save=save, refined=refined)
+        percentages = self.get_buckets(observe, axis=axis, stepsize=stepsize, verbose=verbose, save=save,
+                                       refined=refined)
 
         dst, (pi, pj) = percentages[0]
 
@@ -787,3 +434,226 @@ class InkGamut:
         return dst
 
 
+class InkLibrary:
+    """
+    InkLibrary is a class equipped with a method for "fast ink gamut search". It uses PCA to identify
+    the best k-ink set from a larger library.
+    """
+
+    def __init__(self, library: Dict[str, Spectra], paper: Spectra):
+        self.names = list(library.keys())
+        spectras = list(library.values())
+        self.wavelengths = spectras[0].wavelengths
+        self.spectras = np.array([s.data for s in spectras])
+        self.K = len(self.names)
+        for s in spectras:
+            assert np.array_equal(s.wavelengths, self.wavelengths)
+        assert np.array_equal(self.wavelengths, paper.wavelengths)
+        self.paper = paper.data
+
+    def distance_search(self, observe: Union[Observer, npt.NDArray],
+                        illuminant: Union[Spectra, npt.NDArray], top=100, k=None, stepsize=0.1):
+        # slow unoptimized method, finds max q distance along point cloud
+        if isinstance(observe, Observer):
+            observe = observe.get_sensor_matrix(self.wavelengths)
+        if k is None:
+            print(type(observe))
+            k = observe.shape[0]
+
+        top_scores = []
+        for inkset_idx in tqdm(combinations(range(self.K), k), total=comb(self.K, k), desc="finding best inkset"):
+            names = [self.names[i] for i in inkset_idx]
+
+            spectras = [Spectra(wavelengths=self.wavelengths, data=self.spectras[idx]) for idx in inkset_idx]
+
+            gamut = InkGamut(spectras, Spectra(wavelengths=self.wavelengths, data=self.paper), illuminant)
+            score = gamut.get_width(observe, stepsize=stepsize, verbose=False)
+            if len(top_scores) < top:
+                heapq.heappush(top_scores, (score, names))
+            else:
+                if score > top_scores[0][0]:
+                    heapq.heapreplace(top_scores, (score, names))
+        return sorted(top_scores, reverse=True)
+
+    def convex_hull_search(self, observe: Union[Observer, npt.NDArray],
+                           illuminant: Union[Spectra, npt.NDArray], top=100, k=None):
+        # super efficient way to find best k-ink subset of large K ink library
+        if isinstance(observe, Observer):
+            observe = observe.get_sensor_matrix(self.wavelengths)
+        if isinstance(illuminant, Spectra):
+            illuminant = illuminant.interpolate_values(self.wavelengths).data
+        if k is None:
+            k = observe.shape[0]
+
+        km_cache = {}
+
+        total_iterations = sum(comb(self.K, i) for i in range(2, k + 1))
+
+        ks_cache = []
+        for ink in self.spectras:
+            ks_cache.append(np.stack(k_s_from_data(ink)))
+
+        with tqdm(total=total_iterations, desc="loading km cache") as pbar:
+            for i in range(2, k + 1):
+                concentrations = np.ones(i) / i
+                for subset in combinations(range(self.K), i):
+                    inks_to_mix = [ks_cache[idx] for idx in subset]
+                    ks_batch = np.stack(inks_to_mix, axis=2)
+                    ks_mix = ks_batch @ concentrations
+                    data = data_from_k_s(ks_mix[0], ks_mix[1])
+                    km_cache[subset] = data.astype(np.float16)
+                    pbar.update(1)
+
+        del ks_cache
+
+        denominator = np.matmul(observe, illuminant.T)[:, np.newaxis]
+
+        top_scores = []
+        for inkset_idx in tqdm(combinations(range(self.K), k), total=comb(self.K, k), desc="finding best inkset"):
+            names = [self.names[i] for i in inkset_idx]
+
+            primaries_array = [self.paper]
+            primaries_array.extend([self.spectras[idx] for idx in inkset_idx])
+            primaries_array.extend(
+                [km_cache[subset] for i in range(2, k + 1) for subset in combinations(inkset_idx, i)])
+
+            primaries_array = np.array(primaries_array)
+
+            numerator = np.matmul(observe, (primaries_array * illuminant).T)
+            observe_mix = np.divide(numerator, denominator)  # 4 x 16
+            vol = ConvexHull(observe_mix.T).volume
+
+            if len(top_scores) < top:
+                heapq.heappush(top_scores, (vol, names))
+            else:
+                if vol > top_scores[0][0]:
+                    heapq.heapreplace(top_scores, (vol, names))
+
+        return sorted(top_scores, reverse=True)
+
+    def cached_pca_search(self, observe: Union[Observer, npt.NDArray],
+                          illuminant: Union[Spectra, npt.NDArray], top=50, k=None):
+        # super efficient way to find best k-ink subset of large K ink library
+        if isinstance(observe, Observer):
+            observe = observe.get_sensor_matrix(self.wavelengths)
+        if isinstance(illuminant, Spectra):
+            illuminant = illuminant.interpolate_values(self.wavelengths).data
+        if k is None:
+            k = observe.shape[0]
+
+        km_cache = {}
+        # Populate cache
+        total_iterations = sum(comb(self.K, i) for i in range(2, k + 1))
+
+        top_scores = []
+
+        with tqdm(total=total_iterations, desc="loading km cache") as pbar:
+            ks_cache = []
+            for ink in self.spectras:
+                ks_cache.append(np.stack(k_s_from_data(ink)))
+
+            for i in range(2, k + 1):
+                concentrations = np.ones(i) / i
+                for subset in combinations(range(self.K), i):
+                    inks_to_mix = [ks_cache[idx] for idx in subset]
+                    ks_batch = np.stack(inks_to_mix, axis=2)
+                    ks_mix = ks_batch @ concentrations
+                    data = data_from_k_s(ks_mix[0], ks_mix[1])
+                    km_cache[subset] = data.astype(np.float16)
+                    pbar.update(1)
+
+            del ks_cache
+
+        weights_array = []
+        for i in range(k + 1):
+            for subset in combinations(range(k), i):
+                binary = [0] * k
+                for index in subset:
+                    binary[index] = 1
+                weights_array.append(binary)
+        weights_array = np.array(weights_array)
+
+        # nothing
+        top_scores = []
+
+        stepsize = 0.2
+        values = np.arange(0, 1 + stepsize, stepsize)
+        mesh = np.meshgrid(*([values] * k))
+        grid = np.stack(mesh, axis=-1).reshape(-1, k)
+
+        w_p = ((weights_array * grid[:, np.newaxis, :]) +
+               (1 - weights_array) * (1 - grid[:, np.newaxis, :]))
+        w_p_prod = np.prod(w_p, axis=2, keepdims=True)
+
+        pca = PCA(n_components=observe.shape[0])
+        tsvd = TruncatedSVD(n_components=observe.shape[0], n_iter=5, random_state=42)
+
+        denominator = np.matmul(observe, illuminant.T)[:, np.newaxis]
+
+        inkset_iteration_tt = 0
+        # Find best inkset
+        iters = 0
+        for inkset_idx in tqdm(combinations(range(self.K), k), total=comb(self.K, k), desc="finding best inkset"):
+
+            names = [self.names[i] for i in inkset_idx]
+
+            primaries_array = [self.paper]
+            primaries_array.extend([self.spectras[idx] for idx in inkset_idx])
+            primaries_array.extend(
+                [km_cache[subset] for i in range(2, k + 1) for subset in combinations(inkset_idx, i)])
+
+            primaries_array = np.array(primaries_array)
+            data_array = np.power(primaries_array, 1.0 / 50)
+
+            mix = np.power(np.matmul(w_p_prod.transpose(0, 2, 1), data_array), 50).squeeze(axis=1)
+
+            numerator = np.matmul(observe, (mix * illuminant).T)
+            observe_mix = np.divide(numerator, denominator)
+            pca.fit(observe_mix)
+            score = np.sqrt(pca.explained_variance_)[-1]
+
+            if len(top_scores) < top:
+                heapq.heappush(top_scores, (score, names))
+            else:
+                if score > top_scores[0][0]:
+                    heapq.heapreplace(top_scores, (score, names))
+
+            iters += 1
+            if iters > 1000:
+                print("pca iteration", inkset_iteration_tt / iters, "seconds")
+
+                return
+
+        return sorted(top_scores, reverse=True)
+
+
+class FastNeugebauer:
+    def __init__(self, weights_array, data_array, num_inks):
+        self.weights_array = weights_array
+        self.data_array = np.power(data_array, 1.0 / 50)
+        self.num_inks = num_inks
+
+    def batch_mix(self, percentages: npt.NDArray) -> npt.NDArray:
+        w_p = ((self.weights_array * percentages[:, np.newaxis, :]) +
+               (1 - self.weights_array) * (1 - percentages[:, np.newaxis, :]))
+        w_p_prod = np.prod(w_p, axis=2, keepdims=True)
+
+        result = np.power(np.matmul(w_p_prod.transpose(0, 2, 1), self.data_array), 50).squeeze(axis=1)
+
+        return result
+
+    def batch_observe(self, percentages: npt.NDArray, observer: npt.NDArray, illuminant: npt.NDArray):
+        spectras = self.batch_mix(percentages)
+        numerator = np.matmul(observer, (spectras * illuminant).T)
+        denominator = np.matmul(observer, illuminant.T)
+        result = np.divide(numerator, denominator[:, np.newaxis])
+        return result.T
+
+    def get_pca_size(self, grid, observe: npt.NDArray, illuminant: npt.NDArray):
+        stimulus = self.batch_observe(grid, observe, illuminant)
+
+        pca = PCA(n_components=observe.shape[0])
+
+        pca.fit(stimulus)
+
+        return np.sqrt(pca.explained_variance_)[-1]

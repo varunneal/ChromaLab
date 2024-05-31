@@ -185,6 +185,10 @@ accessed via the colour-science python library. For a complete list, check out t
 - https://colour.readthedocs.io/en/v0.4.3/generated/colour.SDS_LIGHT_SOURCES.html
 
 
+**Ink Gamut and Ink Selection Guide**
+
+Details on ink selection from a large library and an overview of ink gamuts here: https://docs.google.com/document/d/1zk-YwxOXJT1EKzPZWLzSDFmpAefQbZvMar_Gnl3U7rA/edit?usp=sharing
+
 **Printing Guide**
 
 Details on how to print these images and care for the printers are stored in the Chromanomicon: https://docs.google.com/document/d/1aY0kK8a2noLJI1ASviQuUDT8Az-z2RsLglgO0wXKncc/edit?usp=sharing
