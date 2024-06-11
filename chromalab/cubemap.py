@@ -215,7 +215,7 @@ class CubeMap:
 
         return ii, dd, self.rgbs[ii]
     
-    def display_cubemap_Q_orientation(self, lumval, satval, side_len):
+    def display_cubemap_Q_orientation(self, lumval, satval, side_len, prob_scrambled=0.5):
         idxs, distances, rgb = self.get_cube_map_standard(lumval, satval, side_len, sampling_method=self.SamplingCubeMap.STD, radius_lim=1)
         
         smql = self.point_cloud[idxs]
@@ -224,7 +224,7 @@ class CubeMap:
         ends = ["_cubemap", "_square", "_scrambled", "_rgb_square", "_rgb_scrambled"]
         for end in ends:
             os.makedirs(dirname + end, exist_ok=True)
-        random_array = np.random.choice([0, 1], size=(side_len, side_len), p=[0.7, 0.3])
+        random_array = np.random.choice([0, 1], size=(side_len, side_len), p=[1-prob_scrambled, prob_scrambled])
         self._display_cube_map_grayscale(dirname + "_cubemap", smql, side_len)
         self._display_cube_map_square(dirname + "_square", smql, side_len)
         self._display_cube_map_square(dirname + "_scrambled", smql, side_len, random_array=random_array, is_scrambled=True)
