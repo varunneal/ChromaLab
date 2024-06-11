@@ -18,7 +18,8 @@ from collections import defaultdict
 import math
 
 from .spectra import Spectra
-from .observer import Observer
+from .observer import Observer, getHeringMatrix, transformToChromaticity
+from .maxbasis import MaxBasis
 
 from sklearn.decomposition import PCA, TruncatedSVD
 from scipy.special import comb
@@ -758,6 +759,39 @@ class InkGamut:
         _percentages = []
 
         buckets = sort_buckets(bucket_points(point_cloud, axis=axis), axis=axis)
+        for dst, (i, j) in buckets:
+            _percentages.append((dst, (tuple(percentages[i]), tuple(percentages[j]))))
+
+        _percentages.sort(reverse=True)
+        return _percentages
+    
+    def get_buckets_in_hering(self, max_basis: MaxBasis,
+                  axis=2, stepsize=0.1, verbose=True, save=False):
+        maxbasis_observer = max_basis.get_max_basis_observer()
+        point_cloud, percentages = self.get_point_cloud(maxbasis_observer, stepsize, verbose=verbose)
+        if verbose: print("Point cloud generated.")
+
+        if save:
+            np.save(f"{save}_point_cloud{int(100 * stepsize)}", point_cloud)
+            np.save(f"{save}_percentages{int(100 * stepsize)}", percentages)
+            if verbose: print(f"Point cloud saved to {save}_point_cloud{int(100 * stepsize)}.")
+
+        _percentages = []
+        # HMatrix = getHeringMatrix(4)
+        Tmat = max_basis.get_cone_to_maxbasis_transform()
+        # maxbasis_pts = (HMatrix @ Tmat @ point_cloud.T).T
+        Q_vec = [Tmat @np.array([0, 0, 1, 0]), np.array([1, 0, 0, 0]), np.array([0, 1, 0, 0]), np.array([0, 0, 1, 0])] # Q direction
+        # NOT DONE
+        def gram_schmidt(vectors):
+            basis = []
+            for v in vectors:
+                w = v - np.sum( np.dot(v,b)*b  for b in basis )
+                if (w > 1e-10).any():  
+                    basis.append(w/np.linalg.norm(w))
+            return np.array(basis)
+        A = gram_schmidt(Q_vec)
+        new_point_cloud = (A @ point_cloud.T).T
+        buckets = sort_buckets(bucket_points(new_point_cloud, axis=0), axis=0)
         for dst, (i, j) in buckets:
             _percentages.append((dst, (tuple(percentages[i]), tuple(percentages[j]))))
 

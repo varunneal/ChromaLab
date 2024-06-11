@@ -25,5 +25,10 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
-
+notebooks/assets/*
+*.png
+*.cpython-311.pyc
+*.tif
+*.zip
+*.pyc
 .DS_Store

@@ -3,9 +3,31 @@ from functools import reduce
 from tqdm import tqdm
 
 import numpy as np
+import glm
 
-from .observer import Observer
-from .spectra import Spectra, convert_refs_to_spectras
+from .observer import Observer, getHeringMatrix
+from .spectra import Spectra, convert_refs_to_spectras, Illuminant
+
+
+def getCylinderTransform(endpoints):
+    a = endpoints[1]-endpoints[0]
+    a = glm.vec3(a[0], a[1], a[2])
+    b = glm.vec3(0, 0, 1)
+    
+    mat = glm.mat4()
+    # translate
+    mat = glm.translate(mat, glm.vec3(endpoints[0][0], endpoints[0][1], endpoints[0][2]))
+    # rotate
+    v = glm.cross(b, a)
+    if v!= glm.vec3(0, 0, 0):
+        angle = glm.acos(glm.dot(b, a) / (glm.length(b) * glm.length(a)))
+        mat = glm.rotate(mat, angle, v)
+
+    # scale
+    scale_factor = glm.length(a)
+    mat = glm.scale(mat, glm.vec3(scale_factor, scale_factor, scale_factor))
+
+    return mat
 
 class MaxBasis:
     dim4SampleConst = 10
@@ -20,6 +42,8 @@ class MaxBasis:
         self.step_size = self.observer.wavelengths[1] - self.observer.wavelengths[0]
         self.dim_sample_const = self.dim4SampleConst if self.dimension == 4 else self.dim3SampleConst
 
+        self.HMatrix = getHeringMatrix(observer.dimension)
+
         self.__getMaximalBasis()
         self.__findConeToBasisTransform(isReverse=True)
 
@@ -30,7 +54,6 @@ class MaxBasis:
         cone_vals = np.array([np.dot(self.matrix, Spectra.from_transitions(x, 1 if i == 0 else 0, self.wavelengths).data) for i, x in enumerate(transitions)])
         vol = np.abs(np.linalg.det(cone_vals))
         return vol
-    
 
     def __findMaximalCMF(self, isReverse=True):
         sortedCutpoints = self.cutpoints[:self.dimension - 1]
@@ -47,7 +70,7 @@ class MaxBasis:
         for i in range(self.dimension):
             spectra = np.concatenate([self.observer.wavelengths[:, np.newaxis], self.maximal_matrix[i][:, np.newaxis]], axis=1)
             self.maximal_sensors +=[Spectra(spectra, self.observer.wavelengths)]
-        self.maximal_observer = Observer(self.maximal_sensors, self.observer.illuminant, verbose=self.verbose)
+        self.maximal_observer = Observer(self.maximal_sensors, verbose=self.verbose) # erased self.observer.illuminant.
         return self.maximal_sensors, self.maximal_observer
 
     
@@ -155,8 +178,28 @@ class MaxBasis:
         transitions += [[wavelengths[i], wavelengths[i+1]] for i in range(len(wavelengths)-1)]
         transitions.sort()
         return transitions
+    
+    def getMatrixOrientationQUp(self):
+        length = 1
+        basisLMSQ = np.array([[0, 0, 1, 0]]) * length # Q cone
+        basisLMSQ = ((self.HMatrix@self.get_cone_to_maxbasis_transform())@basisLMSQ.T).T[:, 1:][0]
+        # matrix = np.linalg.inv(getCylinderTransform([np.array([0, 0, 0]), basisLMSQ/np.linalg.norm(basisLMSQ)])) # go from Q to the basis [0, 0, 1]
+        matrix = np.array(getCylinderTransform([np.array([0, 0, 0]), basisLMSQ/np.linalg.norm(basisLMSQ)]))
+        return matrix[:3, :3]
+    
+    def getRotMatQUp(self):
+        Q_vec = [self.cone_to_maxbasis @np.array([0, 0, 1, 0]), np.array([1, 0, 0, 0]), np.array([0, 1, 0, 0]), np.array([0, 0, 1, 0])] # Q direction
+        def gram_schmidt(vectors):
+            basis = []
+            for v in vectors:
+                w = v - np.sum( np.dot(v,b)*b  for b in basis )
+                if (w > 1e-10).any():  
+                    basis.append(w/np.linalg.norm(w))
+            return np.array(basis)
+        A = gram_schmidt(Q_vec)
+        return A
 
-    def getDiscreteRepresentation(self):
+    def getDiscreteRepresentation(self, reverse=False):
         transitions = self.getCutpointTransitions(self.cutpoints[:self.dimension-1])
         start_vals = [1 if i == 0 else 0 for i, x in enumerate(transitions)]
         allcombos = [[]]
@@ -186,6 +229,9 @@ class MaxBasis:
                 madeupof = list(combinations(x, len(x)-1))
                 lines += [[alllines.index(elem) + 1, i + 1] for elem in madeupof] # connected to each elem
         refs = [Spectra.from_transitions( x, final_start[i], self.wavelengths) for i, x in enumerate(final_combos)]
-        points = np.array([self.maximal_matrix @ ref.data for ref in refs])
-        rgbs = np.array([s.to_rgb(illuminant=self.observer.illuminant) for s in refs])
+        if reverse:
+            points = np.array([self.maximal_matrix[::-1] @ ref.data for ref in refs])
+        else:
+            points = np.array([self.maximal_matrix @ ref.data for ref in refs])
+        rgbs = np.array([s.to_rgb(illuminant=Illuminant.get("E")) for s in refs])
         return refs, points, rgbs, lines

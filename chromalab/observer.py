@@ -6,6 +6,7 @@ from scipy.spatial import ConvexHull
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+from tqdm import tqdm
 
 from .spectra import Spectra, Illuminant
 from .zonotope import getReflectance, getZonotopePoints
@@ -304,11 +305,11 @@ class Observer:
         self.wavelengths = total_wavelengths
 
         self.sensor_matrix = self.get_sensor_matrix(total_wavelengths)
-        self.illuminant = illuminant.interpolate_values(self.wavelengths)
+ 
         if illuminant is not None:
             illuminant = illuminant.interpolate_values(self.wavelengths)
         else:
-            illuminant = Illuminant(np.ones_like(self.wavelengths), self.wavelengths)
+            illuminant = Illuminant(np.vstack([self.wavelengths, np.ones_like(self.wavelengths)]).T)
 
         self.illuminant = illuminant
         self.normalized_sensor_matrix = self.get_normalized_sensor_matrix(total_wavelengths)
@@ -325,7 +326,7 @@ class Observer:
     @staticmethod
     def tetrachromat(wavelengths=None, illuminant=None, verbose=False):
         # This is a "maximally well spaced" tetrachromat
-        l_cone = Cone.l_cone(wavelengths) #Cone.cone(559, wavelengths=wavelengths, template="neitz", od=0.35)
+        l_cone = Cone.l_cone(wavelengths) # Cone.cone(555, wavelengths=wavelengths, template="neitz", od=0.35)
         q_cone = Cone.cone(545, wavelengths=wavelengths, template="neitz", od=0.35)
         m_cone = Cone.m_cone(wavelengths) ##Cone.cone(530, wavelengths=wavelengths, template="neitz", od=0.35)
         s_cone = Cone.s_cone(wavelengths) ##Cone.s_cone(wavelengths=wavelengths)
@@ -385,7 +386,7 @@ class Observer:
 
     def get_optimal_rgbs(self) -> npt.NDArray:
         rgbs = []
-        for cuts, start in self.facet_ids:
+        for cuts, start in tqdm(self.facet_ids):
             ref = getReflectance(cuts, start, self.normalized_sensor_matrix, self.dimension)
             ref = np.concatenate([self.wavelengths[:, np.newaxis], ref[:, np.newaxis]], axis=1)
             rgbs+= [Spectra(ref).to_rgb(illuminant=self.illuminant)]
@@ -396,9 +397,28 @@ class Observer:
         tmp = [[[x, 1], [x, 0]] for x in facet_ids]
         self.facet_ids = [y for x in tmp for y in x]
         self.point_cloud = np.array(list(facet_sums.values())).reshape(-1, self.dimension)
-        self.rgbs = self.get_optimal_rgbs()
+        self.rgbs = self.get_optimal_rgbs().reshape(-1, 3)
         
-    
+    def get_enumeration_of_solid(self, step_size): # TODO: In the works
+        facet_ids, facet_sums = getZonotopePoints(self.normalized_sensor_matrix, self.dimension, self.verbose)
+        tmp = [[[x, 1], [x, 0]] for x in facet_ids]
+        self.facet_ids = [y for x in tmp for y in x]
+        points = np.array(list(facet_sums.values())).reshape(-1, self.dimension)
+        divisors = np.tile(np.repeat(np.arange(0.1, 1+step_size, step_size), 4).reshape(-1, 4), (len(points), 1))
+
+        # TODO: change 10 to a factor of step_size
+        self.point_cloud = np.repeat(points, 10, axis=0)*divisors
+        
+        rgbs = []
+        for cuts, start in tqdm(self.facet_ids):
+            ref = getReflectance(cuts, start, self.normalized_sensor_matrix, self.dimension)
+            ref = np.concatenate([self.wavelengths[:, np.newaxis], ref[:, np.newaxis]], axis=1)
+            rgbs+= [Spectra(ref).to_rgb(illuminant=self.illuminant)]
+        
+        self.rgbs = np.array(rgbs).reshape(-1, 3)
+        self.rgbs = np.repeat(self.rgbs, 10, axis=0)*divisors[:, :3]
+        return self.point_cloud, self.rgbs
+
     def get_optimal_colors(self)-> Union[npt.NDArray, npt.NDArray]:
         if not hasattr(self, 'point_cloud'):
             self.__find_optimal_colors()
