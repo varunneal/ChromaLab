@@ -195,7 +195,9 @@ Details on how to print these images and care for the printers are stored in the
 
 **Development Installation**
 
-Install requirements first by making a conda enviornnment with python 3.11 `conda create -n chromalab python=3.11`, and then install packages with `pip install -r requirements`. Then, install the library while making it editable by with the `-e`. 
+A script has been written to install all of the requirements in a separate conda environment. It will create a conda environment titled "chromalab", and install python 3.11, with the requirements file, and install the editable package. 
+
+Otherwise, to do so manually, install requirements first by making a conda enviornnment with python 3.11 `conda create -n chromalab python=3.11`, and then install packages with `pip install -r requirements`. Then, install the library while making it editable by with the `-e`. 
 ```
 pip install -e /path/to/ChromaLab
 ```
