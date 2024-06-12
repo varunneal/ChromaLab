@@ -125,10 +125,49 @@ class GeometryPrimitives:
         return mesh
     
     @staticmethod
+    def calculate_zy_rotation_for_arrow(vec):
+        gamma = np.arctan2(vec[1], vec[0])
+        Rz = np.array([
+                        [np.cos(gamma), -np.sin(gamma), 0],
+                        [np.sin(gamma), np.cos(gamma), 0],
+                        [0, 0, 1]
+                    ])
+
+        vec = Rz.T @ vec
+
+        beta = np.arctan2(vec[0], vec[2])
+        Ry = np.array([
+                        [np.cos(beta), 0, np.sin(beta)],
+                        [0, 1, 0],
+                        [-np.sin(beta), 0, np.cos(beta)]
+                    ])
+        return Rz, Ry
+    
+    @staticmethod
+    def get_arrow(end, origin=np.array([0, 0, 0]), scale=1):
+        assert(not np.all(end == origin))
+        vec = end - origin
+        size = np.sqrt(np.sum(vec**2))
+        ratio_cone_cylinder = 0.15
+        radius = 60
+        ratio_cone_bottom_to_cylinder = 2
+
+        Rz, Ry = GeometryPrimitives.calculate_zy_rotation_for_arrow(vec)
+        mesh = o3d.geometry.TriangleMesh.create_arrow(cone_radius=1/radius * ratio_cone_bottom_to_cylinder * scale,
+            cone_height= size * ratio_cone_cylinder* scale,
+            cylinder_radius=1/radius* scale,
+            cylinder_height=size * (1 - ratio_cone_cylinder *scale))
+        mesh.rotate(Ry, center=np.array([0, 0, 0]))
+        mesh.rotate(Rz, center=np.array([0, 0, 0]))
+        mesh.translate(origin)
+        return(mesh)
+    
+    @staticmethod
     def createArrow(endpoints, radius=0.025/2, resolution=20, color=[0, 0, 0])->o3d.geometry.TriangleMesh:
-        mesh = o3d.geometry.TriangleMesh.create_arrow(cylinder_radius=radius, cone_radius= radius * 2, cylinder_height=0.95, cone_height=0.05, resolution=resolution)
-        matrix = getCylinderTransform(endpoints)
-        mesh.transform(matrix)
+        # mesh = o3d.geometry.TriangleMesh.create_arrow(cylinder_radius=radius, cone_radius= radius * 2, cylinder_height=0.95, cone_height=0.05, resolution=resolution)
+        # matrix = getCylinderTransform(endpoints)
+        # mesh.transform(matrix)
+        mesh = GeometryPrimitives.get_arrow(endpoints[1], endpoints[0], scale=1)
         mesh.compute_vertex_normals()
         mesh.vertex_colors = o3d.utility.Vector3dVector(np.array([color]*len(mesh.vertices)))
         return mesh
@@ -655,8 +694,8 @@ class PSWrapper:
         transforms_LMS, transforms_RGB = self._getIntermediateTransformsLMSRGB(frame_count)
 
         ps_mesh = ps.get_surface_mesh("mesh")
-        names = self._getCoordBasis("RGB_coords", transforms_RGB[0][:3, :3], 1)
-        names += [self._getCoordBasis("LMS_coords", transforms_LMS[0][:3, :3], 1)]
+        names = self._getCoordBasis("RGB_coords", ((HMat@transforms_RGB[0])[:3, :3]).T, 1)
+        names += self._getCoordBasis("LMS_coords", ((HMat@transforms_LMS[0])[:3, :3]).T, 1)
 
         def rotate_once(offset, frame_count):
             for j in range(frame_count): # rotate once
@@ -667,20 +706,21 @@ class PSWrapper:
 
         def expandBasis(offset, frame_count):
             for j in range(frame_count): # rotate back
+                [ps.get_surface_mesh(n).remove() for n in names]
+
                 phi = 360 * (phi_offset) / frame_count
                 point_3d = PSWrapper.polarToCartesian(r, theta, phi)
                 # add coordinate transform
 
-                ps_mesh.set_transform(HMat@transforms[j])
-                self._getCoordBasis("coord", (HMat@transforms[j])[:3, :3])
+                ps_mesh.set_transform(HMat@transforms_LMS[j])
+                self._getCoordBasis("RGB_coords", ((HMat@transforms_RGB[j])[:3, :3]).T)
+                self._getCoordBasis("LMS_coords", ((HMat@transforms_LMS[j])[:3, :3]).T)
 
                 ps.look_at(point_3d, [0, 0, np.sqrt(3)/2])
                 ps.screenshot(dirname + f"/frame_{offset * frame_count + j:03d}.png", True)
-                ps.get_surface_mesh("coord").remove()
         
         
         rotate_once(0, frame_count)
-        ps.get_surface_mesh(names[0]).remove()
         expandBasis(1, frame_count)
         rotate_once(2, frame_count)
 
