@@ -32,4 +32,5 @@ MANIFEST
 *.pyc
 .DS_Store
 *.ini
-/notebooks/assets/outputs
+/notebooks/assets/outputs/*
+/notebooks/assets/data/*

@@ -45,7 +45,6 @@ class PCAAnalysis:
         self.observer = observer
         # Generate the points here (representation that can be used for normal and spatial)
 
-
     def _pca_analysis(self, points):
         pca = decomposition.PCA(n_components=self.dim)
         pca.fit_transform(points.reshape(-1, self.dim))
@@ -75,6 +74,19 @@ class PCAAnalysis:
         self.spatial_pts =  reordered.reshape(-1, 128, 128, 9 * 4) # 36 dim vector
 
     def get_LMSQ_Responses(self):
+        LMSQ =[]
+        center = (482//2, 512//2)
+        offsets = [[center[0] - 64, center[0] + 64], [center[1] - 64, center[1] + 64]] # center crop image (they did this in the paper)
+        for i in tqdm(range(1, 900+1)):
+            try:
+                spectra_img=getithImage(i)[0][offsets[0][0]:offsets[0][1], offsets[1][0]:offsets[1][1]].reshape(-1, 31)
+            except:
+                continue
+            LMSQ += [((self.observer.get_normalized_sensor_matrix()@spectra_img.T).T)]
+        pts = np.stack(LMSQ, axis=0)
+        return pts
+
+    def get_whitened_LMSQ_Responses(self):
         if hasattr(self, 'points'):
             return
         LMSQ =[]
@@ -85,11 +97,12 @@ class PCAAnalysis:
                 spectra_img=getithImage(i)[0][offsets[0][0]:offsets[0][1], offsets[1][0]:offsets[1][1]].reshape(-1, 31)
             except:
                 continue
-            colour_d65 = Illuminant.get('D65')
-            idx1 = (self.cf.minwave-300)//5
-            idx2 = (self.cf.maxwave + 5 - 300)//5
-            d65 = colour_d65.values[idx1:idx2:2] # / max(colour_d65.values[idx1:idx2:2])
-            LMSQ_vals = np.log10((self.cf.M@(spectra_img * d65).T).T) # change these lines
+            # colour_d65 = Illuminant.get('D65')
+            # idx1 = (self.cf.minwave-300)//5
+            # idx2 = (self.cf.maxwave + 5 - 300)//5
+            # d65 = colour_d65.values[idx1:idx2:2] # / max(colour_d65.values[idx1:idx2:2])
+            # LMSQ_vals = np.log10((self.cf.M@(spectra_img * d65).T).T) # change these lines
+            LMSQ_vals = np.log10((self.observer.observe(spectra_img)).T)
             whitened_vals = LMSQ_vals - np.mean(LMSQ_vals, axis=0)
             whitened_vals = whitened_vals.reshape(128, 128, 4)
             LMSQ += [whitened_vals]
@@ -98,7 +111,7 @@ class PCAAnalysis:
         self.points = pts
     
     def analyzeConeFund(self):
-        self.get_LMSQ_Responses()
+        self.get_whitened_LMSQ_Responses()
         self.pca_cone = self.pca_analysis(self.points)
         
     def analyzeSpatial(self, spatial_pca_filename):
