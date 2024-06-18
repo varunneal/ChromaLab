@@ -13,3 +13,6 @@ open3d
 polyscope
 alphashape
 colour-science
+pyglm
+ipympl
+h5py

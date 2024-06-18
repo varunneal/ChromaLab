@@ -4,6 +4,9 @@ from tqdm import tqdm
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
+from enum import Enum
+import os
+import random
 
 from .observer import transformToChromaticity, getHeringMatrix
 from .spectra import Spectra
@@ -23,7 +26,11 @@ def sampleCubeMapFaces(list_of_faces, samples_per_line=5):
                 p = e + j*(f - e);
                 one_face +=[p]
         output += [one_face]
-    return np.array(output)
+    all_directions = np.array(output)
+
+    for j in range(6):
+            all_directions[j] = all_directions[j] / np.repeat(np.expand_dims(np.linalg.norm(all_directions[j], axis=1), axis=1), repeats=3, axis=1)
+    return all_directions
 
 
 def plotTogether(ax, chrom_pts, sphere_pts):
@@ -51,25 +58,73 @@ class CubeMap:
         else: 
             raise ValueError("Either rgbs or refs and ref_wavelengths must be provided")
         self.point_cloud = point_cloud
+
+        Tmat = self.maxbasis.get_cone_to_maxbasis_transform()
+        self.HMatrix = getHeringMatrix(4)
+        self.mb_point_cloud = (Tmat @ self.point_cloud.T).T
         self.verbose = verbose
 
+    class SamplingCubeMap(Enum):
+        BITSEQ = 1
+        STD = 2
     
-    def __get_corners(self):
+    def __get_corners_hue_sphere(self):
         # center, then the 4 corners of the face
-        list_corners = [[6, 11, 3, 1, 13], [5, 12, 2, 1, 11], [8, 2, 14, 11, 3], [10, 14, 4, 3, 13], [7, 4, 12, 13, 1], [9, 12, 4, 2, 14]]
+        list_corners = [[9, 12, 4, 2, 14],[5, 12, 2, 1, 11], [8, 2, 14, 11, 3], [10, 14, 4, 3, 13], [7, 4, 12, 13, 1], [6, 11, 3, 1, 13]]
         refs, maxbasispoints, rgbs, lines = self.maxbasis.getDiscreteRepresentation()
         points = transformToChromaticity(maxbasispoints)
         pts_corners = points[list_corners]
         rgb_corners = rgbs[list_corners]
         return pts_corners, rgb_corners
+    
+    def __get_corners_standard(self):
+        # 6 faces - formatting is left to right from the top to the bottom of the cube map
+        list_corners = [ [2, 4, 6, 8], [2, 6, 1, 5], [6, 8, 5, 7], [8, 4, 7, 3], [4, 2, 3, 1], [5, 7, 1, 3]]
+        list_corners = [ [y - 1 for y in x] for x in list_corners]
 
-    def _sample_cube_map(self, satval=1.0, side_len=9):
-        d = 6
-        cube_pts, _ = self.__get_corners()
-        all_directions = sampleCubeMapFaces(cube_pts[:, 1:], side_len) # get chromaticity coord of corners
-        for j in range(d):
-            all_directions[j] = all_directions[j] / np.repeat(np.expand_dims(np.linalg.norm(all_directions[j], axis=1), axis=1), repeats=3, axis=1) * satval # normalize them
-        return all_directions
+        center_faces = np.array([
+            [0, 0, 0.5],
+            [0, -0.5, 0],
+            [0.5, 0, 0],
+            [0, 0.5, 0],
+            [-0.5, 0, 0],
+            [0, 0, -0.5]
+        ])
+
+        corners = np.array([
+            [-0.5, -0.5, -0.5],  # Corner 1
+            [-0.5, -0.5, 0.5],   # Corner 2
+            [-0.5, 0.5, -0.5],   # Corner 3
+            [-0.5, 0.5, 0.5],    # Corner 4
+            [0.5, -0.5, -0.5],   # Corner 5
+            [0.5, -0.5, 0.5],    # Corner 6
+            [0.5, 0.5, -0.5],    # Corner 7
+            [0.5, 0.5, 0.5]      # Corner 8
+        ])
+        faces = corners[list_corners]
+
+        # colors = ['r', 'g', 'b', 'y', 'm', 'c']
+        # fig = plt.figure(figsize=(6, 6))
+        # ax = fig.add_subplot(111, projection='3d')
+        # ax.set_title("Candidate Points in 3D", fontsize=10)
+        # for i in range(6):
+        #     ax.scatter(faces[i][:, 0], faces[i][:, 1], faces[i][:, 2], s=70, c=colors[i], alpha=0.8)
+        #     ax.scatter(center_faces[i][0], center_faces[i][1], center_faces[i][2], s=70, c=colors[i], alpha=0.8)
+        # plt.show()
+
+        return faces
+
+    
+    def _sample_cube_map(self, satval=1.0, sample_pts_side=9, method=SamplingCubeMap.STD):
+        if method == self.SamplingCubeMap.BITSEQ:
+            cube_pts = self.__get_corners_hue_sphere()[0][:, 1:]
+        elif method== self.SamplingCubeMap.STD:
+            cube_pts = self.__get_corners_standard()
+        else:
+            raise ValueError("Invalid method")
+        
+        all_directions = sampleCubeMapFaces(cube_pts, sample_pts_side) # get chromaticity coord of corners
+        return all_directions * satval
     
     def __find_closest_points(self, candidate_points, lumval, samples_per_point=25, radius_limit=0.5, lum_thresh=0.8, out_of_range_color=[0.75, 0.75, 0.75]):
         # for each point, find top samples_per_point closest points, and figure out which one is closest to the luminance value
@@ -114,15 +169,16 @@ class CubeMap:
         dd, ii = kdtree.query(candidate_points, 1, distance_upper_bound=lmsq_radius_limit)
         return np.array(ii), np.array(dd)
     
-    def _get_cubemap_samples_in_hering(self, lumval, satval, side_len):
-        sphere_pts = self._sample_cube_map(satval, side_len).reshape(-1, 3)
+    def _get_cubemap_samples_in_hering(self, lumval, satval, side_len, rot=np.eye(3), sampling_method=SamplingCubeMap.STD):
+        sphere_pts = self._sample_cube_map(satval, side_len, method=sampling_method).reshape(-1, 3)
+        sphere_pts = (rot@sphere_pts.T).T
         lumvals = np.repeat(lumval, sphere_pts.shape[0])
         candidate_points = np.hstack([lumvals[:, np.newaxis], sphere_pts])
 
         return candidate_points
 
-    def _get_cubemap_samples_in_lmsq(self, lumval, satval, side_len):
-        sphere_pts = self._sample_cube_map(satval, side_len).reshape(-1, 3)
+    def _get_cubemap_samples_in_lmsq(self, lumval, satval, side_len, sampling_method=SamplingCubeMap.STD):
+        sphere_pts = self._sample_cube_map(satval, side_len, method=sampling_method).reshape(-1, 3)
         lumvals = np.repeat(lumval, sphere_pts.shape[0])
         candidate_points = np.hstack([lumvals[:, np.newaxis], sphere_pts])
 
@@ -132,16 +188,59 @@ class CubeMap:
         return candidate_points_in_lmsq
     
 
-    def get_cube_map(self, lumval, satval, side_len, radius_lim=0.025, method="hering"):
+    def get_cube_map_standard(self, lumval, satval, side_len, sampling_method=SamplingCubeMap.STD, radius_lim=0.025):
+        Tmat = self.maxbasis.get_cone_to_maxbasis_transform()
+        points = (self.HMatrix @ Tmat @ self.point_cloud.T).T
+        
+        basisLMSQ = np.array([[0, 0, 1, 0]])
+        basisLMSQ = ((self.HMatrix@self.maxbasis.get_cone_to_maxbasis_transform())@basisLMSQ.T).T[:, 1:][0]
+
+        rot = self.maxbasis.getMatrixOrientationQUp() # get the rotation matrix for Q cone up
+        candidate_points_hering = self._get_cubemap_samples_in_hering(lumval, satval, side_len, rot, sampling_method=sampling_method)
+
+        ii, dd = self._find_closest_points(candidate_points_hering, points, radius_lim)
+
+        # fig = plt.figure(figsize=(6, 6))
+        # ax = fig.add_subplot(111, projection='3d')
+        # ax.set_title("Candidate Points in Hering and MaxBasis Chromaticity Space", fontsize=10)
+        # # ax.scatter(points[:, 1], points[:, 2], points[:, 3], s=70, c='blue', alpha=0.8, label='Points')
+        # candidate_points_hering = candidate_points_hering.reshape(6, -1, 4)
+        # rgbs = self.rgbs[ii].reshape(6, -1, 3)
+        # for i in range(6):
+        #     ax.scatter(candidate_points_hering[i][:, 1], candidate_points_hering[i][:, 2], candidate_points_hering[i][:, 3], c=rgbs[i], s=70, alpha=0.8, label='Candidate Points')
+        #     ax.quiver(0, 0, 0, basisLMSQ[0], basisLMSQ[1], basisLMSQ[2], color='black', length=0.01)
+        #     ax.quiver(0, 0, 0, -basisLMSQ[0], -basisLMSQ[1], -basisLMSQ[2], color='black', length=0.01)
+        #     ax.legend()
+        # plt.show()
+
+        return ii, dd, self.rgbs[ii]
+    
+    def display_cubemap_Q_orientation(self, lumval, satval, side_len, prob_scrambled=0.5):
+        idxs, distances, rgb = self.get_cube_map_standard(lumval, satval, side_len, sampling_method=self.SamplingCubeMap.STD, radius_lim=1)
+        
+        smql = self.point_cloud[idxs]
+
+        dirname = "Q_orientation"
+        ends = ["_cubemap", "_square", "_scrambled", "_rgb_square", "_rgb_scrambled"]
+        for end in ends:
+            os.makedirs(dirname + end, exist_ok=True)
+        random_array = np.random.choice([0, 1], size=(side_len, side_len), p=[1-prob_scrambled, prob_scrambled])
+        self._display_cube_map_grayscale(dirname + "_cubemap", smql, side_len)
+        self._display_cube_map_square(dirname + "_square", smql, side_len)
+        self._display_cube_map_square(dirname + "_scrambled", smql, side_len, random_array=random_array, is_scrambled=True)
+        self._display_cube_map_square_rgb(dirname + "_rgb_square", rgb, side_len)
+        self._display_cube_map_square_rgb(dirname + "_rgb_scrambled", rgb, side_len, random_array=random_array, is_scrambled=True)
+
+
+    def get_cube_map(self, lumval, satval, side_len, radius_lim=0.025, sampling_method="hering", ):
          # hering basis metric
         candidate_points_hering = self._get_cubemap_samples_in_hering(lumval, satval, side_len)
-        HMatrix = getHeringMatrix(4)
         Tmat = self.maxbasis.get_cone_to_maxbasis_transform()
-        hering_pts = (HMatrix @ Tmat @ self.point_cloud.T).T
+        hering_pts = (self.HMatrix @ Tmat @ self.point_cloud.T).T
             
         candidate_points_cone = self._get_cubemap_samples_in_lmsq(lumval, satval, side_len)
 
-        if method == "hering":
+        if sampling_method == "hering":
             ii, dd = self._find_closest_points(candidate_points_hering, hering_pts, radius_lim)
         else:
             ii, dd =  self._find_closest_points(candidate_points_cone, self.point_cloud, radius_lim)
@@ -162,6 +261,90 @@ class CubeMap:
             rgb = np.array(rgb)
 
         return ii, dd, rgb, cone_basis_pts, maxbasis_pts, candidate_points_cone, candidate_points_hering
+    
+    def display_cube_map(self, lumval, satval, side_len):
+        idxs, distances, rgb = self.get_cube_map(lumval, satval, side_len)
+        fig, ax = plt.subplots(figsize=(6,4))
+        plt.axis('off')
+        plt.gca().set_aspect('equal')
+        plt.tight_layout()
+
+        self._display_cube_map(ax, rgb, side_len)
+        plt.show()
+
+    def _display_cube_map_square(self, dirname, smql, side_len, random_array=None, is_scrambled=False):
+        step = 1/side_len
+        # sample in the center of the square of each sub square
+        square = np.array([[i, j] for i in (np.arange(0, 1, step) + (1/2*step)) for j in np.arange(0, 1, step) + (1/2*step) ]).reshape(side_len, side_len, 2)
+        cm = square.reshape(-1, 2)
+        
+        import PIL.ImageDraw as ImageDraw
+        import PIL.Image as Image
+
+        circle_radius = 30
+        image_size = (400, 400)
+        border = 10
+        list_names = ["S", "M", "Q", "L"]
+        sub_image_size = (image_size[0] - 2*border,  image_size[1] - 2*border)
+        for j in range(4):
+            channel_info = smql[:, j].reshape(6, side_len, side_len) * 255
+            image = Image.new("L", image_size, color=0)
+            draw = ImageDraw.Draw(image)
+            for i, location in enumerate(cm):
+                idx_1 = i // side_len
+                idx_2 = i % side_len
+                if is_scrambled and random_array[idx_1][idx_2]:
+                    fill = int(channel_info[5][idx_1][side_len - idx_2 -1]) # last face
+                else:
+                    fill = int(channel_info[0][idx_1][idx_2]) # first face
+                location = (int(location[0]*sub_image_size[0] + border), int(location[1]*sub_image_size[1] + border))
+                draw.ellipse([(location[0]-circle_radius, location[1]-circle_radius), (location[0]+circle_radius, location[1]+circle_radius)], fill=fill)
+            image.save(dirname + f"/{list_names[j]}.png")
+
+    def _display_cube_map_square_rgb(self, dirname, rgbs, side_len, random_array=None, is_scrambled=False):
+        step = 1/side_len
+        # sample in the center of the square of each sub square
+        square = np.array([[i, j] for i in (np.arange(0, 1, step) + (1/2*step)) for j in np.arange(0, 1, step) + (1/2*step) ]).reshape(side_len, side_len, 2)
+        cm = square.reshape(-1, 2)
+        
+        import PIL.ImageDraw as ImageDraw
+        import PIL.Image as Image
+
+        circle_radius = 30
+        image_size = (400, 400)
+        border = 10
+        sub_image_size = (image_size[0] - 2*border,  image_size[1] - 2*border)
+        
+        channel_info = rgbs.reshape(6, side_len, side_len, 3) * 255
+        image = Image.new("RGB", image_size, color=0)
+        draw = ImageDraw.Draw(image)
+        for i, location in enumerate(cm):
+            idx_1 = i // side_len
+            idx_2 = i % side_len
+            if is_scrambled and random_array[idx_1][idx_2]:
+                fill = tuple(np.asarray(channel_info[5][idx_1][side_len - idx_2 -1], dtype=int)) # last face
+            else:
+                fill = tuple(np.asarray(channel_info[0][idx_1][idx_2], dtype=int)) # first face
+            location = (int(location[0]*sub_image_size[0] + border), int(location[1]*sub_image_size[1] + border))
+            draw.ellipse([(location[0]-circle_radius, location[1]-circle_radius), (location[0]+circle_radius, location[1]+circle_radius)], fill=fill)
+        image.save(dirname + f"/viz.png")
+
+        if is_scrambled:
+            image = Image.new("L", image_size, color=0)
+            draw = ImageDraw.Draw(image)
+            for i, location in enumerate(cm):
+                idx_1 = i // side_len
+                idx_2 = i % side_len
+                if is_scrambled and random_array[idx_1][idx_2]:
+                    fill = int(255) # last face
+                else:
+                    fill = int(0.2 * 255) # first face
+                location = (int(location[0]*sub_image_size[0] + border), int(location[1]*sub_image_size[1] + border))
+                draw.ellipse([(location[0]-circle_radius, location[1]-circle_radius), (location[0]+circle_radius, location[1]+circle_radius)], fill=fill)
+            image.save(dirname + f"/viz_answer.png")
+
+
+
 
     def display_cube_map(self, lumval, satval, side_len):
         idxs, distances, rgb = self.get_cube_map(lumval, satval, side_len)
@@ -173,8 +356,35 @@ class CubeMap:
         self._display_cube_map(ax, rgb, side_len)
         plt.show()
 
+    def _display_cube_map_grayscale(self, dirname, smql, side_len):
+        cube_left_corner_pts = np.array([[1, 0], [0, 1], [1, 1], [2, 1], [3, 1], [1, 2]])
+
+        step = 1/side_len
+        # sample in the center of the square of each sub square
+        square = np.array([[i, j] for i in (np.arange(0, 1, step) + (1/2*step)) for j in np.arange(0, 1, step) + (1/2*step) ]).reshape(side_len, side_len, 2)
+        cubemap = np.array([ x + square for x in cube_left_corner_pts])/np.array([4, 3])
+
+        cm = cubemap.reshape(-1, 2)
+        
+        import PIL.ImageDraw as ImageDraw
+        import PIL.Image as Image
+
+        circle_radius = 10
+        image_size = (600, 400)
+        border = 10
+        list_names = ["S", "M", "Q", "L"]
+        sub_image_size = (image_size[0] - 2*border,  image_size[1] - 2*border)
+        for j in range(4):
+            channel = smql[:, j]* 255
+            image = Image.new("L", image_size, color=0)
+            draw = ImageDraw.Draw(image)
+            for i, location in enumerate(cm):
+                location = (int(location[0]*sub_image_size[0] + border), int(location[1]*sub_image_size[1] + border))
+                draw.ellipse([(location[0]-circle_radius, location[1]-circle_radius), (location[0]+circle_radius, location[1]+circle_radius)], fill=int(channel[i]))
+            image.save(dirname + f"/{list_names[j]}.png")
+
     def _display_cube_map(self, ax, rgb, side_len):
-        cube_left_corner_pts = np.array([[1, 2], [0, 1], [1, 1], [2, 1], [3, 1], [1, 0]])
+        cube_left_corner_pts = np.array([[1, 0], [0, 1], [1, 1], [2, 1], [3, 1], [1, 2]])
 
         step = 1/side_len
         # sample in the center of the square of each sub square

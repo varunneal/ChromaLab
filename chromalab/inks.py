@@ -14,11 +14,120 @@ from scipy.special import comb
 from sklearn.decomposition import PCA, TruncatedSVD
 from tqdm import tqdm
 
-from .observer import Observer
 from .spectra import Spectra
+from .observer import Observer, getHeringMatrix, transformToChromaticity
+from .maxbasis import MaxBasis
+
+from sklearn.decomposition import PCA, TruncatedSVD
+from scipy.special import comb
+from scipy.spatial import ConvexHull
 
 
-def bucket_points(points: npt.NDArray, axis=2):
+class Pigment(Spectra):
+    # TODO: reformat with kwargs
+    def __init__(self, array: Optional[Union[Spectra, npt.NDArray]] = None,
+                 k: Optional[npt.NDArray] = None,
+                 s: Optional[npt.NDArray] = None,
+                 wavelengths: Optional[npt.NDArray] = None,
+                 data: Optional[npt.NDArray] = None, **kwargs):
+        """
+        Either pass in @param reflectance or pass in
+        @param k and @param s.
+
+        k and s are stored as spectra rather than NDArrays.
+        """
+        if k is not None and s is not None and wavelengths is not None:
+            # compute reflectance from k & s
+            if not k.shape == s.shape or not k.shape == wavelengths.shape:
+                raise ValueError("Coefficients k and s and wavelengths must be same shape.")
+
+            r = 1 + (k / s) - np.sqrt(np.square(k / s) + (2 * k / s))
+            super().__init__(wavelengths=wavelengths, data=r, **kwargs)
+
+        elif array is not None:
+            if isinstance(array, Spectra):
+                super().__init__(**array.__dict__, **kwargs)
+            else:
+                super().__init__(array=array, wavelengths=wavelengths, data=data, **kwargs)
+            k, s = self.compute_k_s()
+        elif data is not None:
+            super().__init__(wavelengths=wavelengths, data=data, **kwargs)
+
+        else:
+            raise ValueError("Must either specify reflectance or k and s coefficients and wavelengths.")
+
+        self.k, self.s = k, s
+
+    def compute_k_s(self) -> Tuple[npt.NDArray, npt.NDArray]:
+        # Walowit · 1987 specifies this least squares method
+        # todo: GJK method as per Centore • 2015
+        array = np.clip(self.array(), 1e-4, 1)
+        k, s = [], []
+        for wavelength, r in array:
+            k_over_s = (1 - r) * (1 - r) / (2 * r)
+            A = np.array([[-1, k_over_s], [1, 1]])
+            b = np.array([0, 1])
+
+            AtA_inv = np.linalg.inv(np.dot(A.T, A))
+            Atb = np.dot(A.T, b)
+
+            _k, _s = np.dot(AtA_inv, Atb)
+            k.append(_k)
+            s.append(_s)
+
+        return np.clip(np.array(k), 0, 1), np.clip(np.array(s), 0, 1)
+
+    def get_k_s(self) -> Tuple[npt.NDArray, npt.NDArray]:
+        # todo: pass in wavelength list for interpolation/sampling consistency with mixing
+        return self.k, self.s
+
+
+def get_metamers(points, target, threshold=1e-2, axis=2):
+    # ok the idea here is to find a point in points
+    # that is a confusion point wrt target
+    metamers = []
+    for idx, point in enumerate(points):
+        # print(point)
+        metamer_closeness = math.sqrt(
+                sum(
+                    [
+                (point[i] - target[i]) ** 2
+            for i in range(len(point)) if i != axis])
+        )
+        if metamer_closeness < threshold:
+            metamers.append((abs(target[axis] - point[axis]), idx))
+    metamers.sort(reverse=True)
+    return metamers
+
+
+def lsh_buckets(points, ignored_axis=2):
+    # Implementation of Locally Sensitive Hashing
+    print(points.shape)
+    n_dimensions = points.shape[1]
+
+    weights = np.zeros(n_dimensions)
+    for i in range(n_dimensions):
+        if i != ignored_axis:
+            weights[i] = 10 ** (2 * (i + 1))
+
+    weights = np.zeros(n_dimensions)
+    adjustments = []
+    for i in range(n_dimensions):
+        if i != ignored_axis:
+            weights[i] = 10 ** (2 * (i + 1))
+            exp_base = 10 ** (2 * (i + 1)) // 2
+            adjustments.extend([exp_base, -exp_base])
+
+    # Calculate base hash values excluding the ignored axis
+    base_hashes = np.dot(points, weights)
+
+    # Apply adjustments and calculate hash values
+    hash_values = np.array([np.floor(base_hashes + adjustment).astype(int) for adjustment in adjustments])
+
+    return hash_values
+
+
+def bucket_points(points: npt.NDArray , axis=2):
     # disjointed buckets
     buckets = defaultdict(list)
     N, d = points.shape
@@ -406,6 +515,39 @@ class InkGamut:
         _percentages = []
 
         buckets = sort_buckets(bucket_points(point_cloud, axis=axis), axis=axis)
+        for dst, (i, j) in buckets:
+            _percentages.append((dst, (tuple(percentages[i]), tuple(percentages[j]))))
+
+        _percentages.sort(reverse=True)
+        return _percentages
+    
+    def get_buckets_in_hering(self, max_basis: MaxBasis,
+                  axis=2, stepsize=0.1, verbose=True, save=False):
+        maxbasis_observer = max_basis.get_max_basis_observer()
+        point_cloud, percentages = self.get_point_cloud(maxbasis_observer, stepsize, verbose=verbose)
+        if verbose: print("Point cloud generated.")
+
+        if save:
+            np.save(f"{save}_point_cloud{int(100 * stepsize)}", point_cloud)
+            np.save(f"{save}_percentages{int(100 * stepsize)}", percentages)
+            if verbose: print(f"Point cloud saved to {save}_point_cloud{int(100 * stepsize)}.")
+
+        _percentages = []
+        # HMatrix = getHeringMatrix(4)
+        Tmat = max_basis.get_cone_to_maxbasis_transform()
+        # maxbasis_pts = (HMatrix @ Tmat @ point_cloud.T).T
+        Q_vec = [Tmat @np.array([0, 0, 1, 0]), np.array([1, 0, 0, 0]), np.array([0, 1, 0, 0]), np.array([0, 0, 1, 0])] # Q direction
+        # NOT DONE
+        def gram_schmidt(vectors):
+            basis = []
+            for v in vectors:
+                w = v - np.sum( np.dot(v,b)*b  for b in basis )
+                if (w > 1e-10).any():  
+                    basis.append(w/np.linalg.norm(w))
+            return np.array(basis)
+        A = gram_schmidt(Q_vec)
+        new_point_cloud = (A @ point_cloud.T).T
+        buckets = sort_buckets(bucket_points(new_point_cloud, axis=0), axis=0)
         for dst, (i, j) in buckets:
             _percentages.append((dst, (tuple(percentages[i]), tuple(percentages[j]))))
 
