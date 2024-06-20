@@ -34,3 +34,4 @@ MANIFEST
 *.ini
 /notebooks/assets/outputs/*
 /notebooks/assets/data/*
+/notebooks/assc-27/data/*
