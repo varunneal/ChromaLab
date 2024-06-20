@@ -79,9 +79,8 @@ def exportAndPlay(dirname):
 
 
 def easeFunction(t):
-    if t < 0: return 0
-    if t > 1: return 1
-    return -2 * t **3 + 3 * t ** 2
+    t = np.clip(t, 0, 1)
+    return -2 * t ** 3 + 3 * t ** 2
 
 
 class DisplayBasisType(Enum):
@@ -220,9 +219,9 @@ class PSWrapper:
 
         self.objects = []
         if itemsToDisplay == PSWrapper.ItemsToDisplay.MESH or itemsToDisplay == PSWrapper.ItemsToDisplay.BOTH:
-            self.mesh = self.__createMesh(displayBasis)
+            self.mesh = self.__createMesh()
         if itemsToDisplay == PSWrapper.ItemsToDisplay.LATTICE or itemsToDisplay == PSWrapper.ItemsToDisplay.BOTH:
-            self.lattice = self.__createLattice(displayBasis)
+            self.lattice = self.__createLattice()
 
     def add_obj(self, obj)->None:
         self.objects.append(obj)
@@ -251,7 +250,7 @@ class PSWrapper:
 
         return alpha_mesh.volume
 
-    def __getIntermediateTransforms(self, num_steps):
+    def _getIntermediateTransforms(self, num_steps):
         transforms = []
         rgb_in_lms = (np.linalg.inv(self.coneToBasis[::-1])@np.eye(self.dim))
         rgb = np.eye(self.dim)
@@ -265,6 +264,16 @@ class PSWrapper:
             mat = np.linalg.inv(new_3)
             mat4 = np.eye(4)
             mat4[:3, :3] = mat
+            transforms += [mat4]
+        return transforms
+    
+    def _getIntermediateTransforms(self, num_steps, t1, t2):
+        transforms = []
+
+        for t in np.arange(0, 1, 1/num_steps):
+            new_3 = (t2 + easeFunction(1-t) * (t1 - t2))
+            mat4 = np.eye(4)
+            mat4[:3, :3] = new_3
             transforms += [mat4]
         return transforms
     
@@ -289,25 +298,16 @@ class PSWrapper:
             mat4[:3, :3] = interpolateLMS
             transforms_LMS += [mat4]
         return transforms_LMS, transforms_RGB
-    
-    def __getIntermediateTransformsOfSet(self, set1, set2, num_steps):
-        transforms = []
-        for t in np.arange(0, 1, 1/num_steps):
-            new_3 = set1 + easeFunction(1-t) * (set2 - set1)
-            mat = np.linalg.inv(new_3)
-            mat4 = np.eye(4)
-            mat4[:3, :3] = mat
-            transforms += [mat4]
-        return transforms
 
-    def __createLattice(self, displayBasisType, displayBasis=None)->o3d.geometry.TriangleMesh:
+    def __createLattice(self, basis=None)->o3d.geometry.TriangleMesh:
         refs, points, rgbs, lines = self.maxBasis.getDiscreteRepresentation()
-        if displayBasisType == DisplayBasisType.CONE:
+        
+        if self.dispBasisType == DisplayBasisType.CONE:
             points = (np.linalg.inv(self.maxBasis.get_cone_to_maxbasis_transform())@points.T).T
         if self.dim > 3:
             points = (self.HMatrix@points.T).T[:, 1:]
-        if displayBasis is not None:
-            points = (displayBasis[:3, :3]@points.T).T
+        if basis is not None:
+            points = (basis[:3, :3]@points.T).T
         
         p = GeometryPrimitives()
         p.createMaxBasis(points, rgbs, lines)
@@ -317,12 +317,12 @@ class PSWrapper:
             lattice += obj
         return lattice
 
-    def __createMesh(self, displayBasisType)->o3d.geometry.TriangleMesh:
+    def __createMesh(self)->o3d.geometry.TriangleMesh:
 
         # 1. Create point cloud using full_colors function
-        if displayBasisType == DisplayBasisType.CONE:
+        if self.dispBasisType == DisplayBasisType.CONE:
             chrom_points, rgbs = self.observer.get_optimal_colors()
-        elif displayBasisType == DisplayBasisType.MAXBASIS:
+        elif self.dispBasisType == DisplayBasisType.MAXBASIS:
             T = self.maxBasis.get_cone_to_maxbasis_transform()
             chrom_points, rgbs = self.observer.get_optimal_colors()
             chrom_points = (T@(chrom_points.T)).T
@@ -345,28 +345,6 @@ class PSWrapper:
         
         return mesh
     
-
-    def displayWTransparency(self, filepath=None):
-
-        ps.init()
-        ps.set_ground_plane_mode("shadow_only")
-        ps.set_background_color([1, 1, 1, 0])
-        ps.set_transparency_mode('pretty')
-
-        ps_mesh = ps.register_surface_mesh("mesh", np.asarray(self.mesh.vertices), np.asarray(self.mesh.triangles), transparency=0.8, material='flat') 
-        ps_mesh.add_color_quantity("mesh_colors", np.asarray(self.mesh.vertex_colors), defined_on='vertices', enabled=True)
-        ps_mesh.set_smooth_shade(True)
-        if self.itemsToDisplay == PSWrapper.ItemsToDisplay.LATTICE or self.itemsToDisplay == PSWrapper.ItemsToDisplay.BOTH:
-            ps_lattice = ps.register_surface_mesh("lattice", np.asarray(self.lattice.vertices), np.asarray(self.lattice.triangles), transparency=1) 
-            ps_lattice.add_color_quantity("lattice_colors", np.asarray(self.lattice.vertex_colors), defined_on='vertices', enabled=True)
-            ps_lattice.set_smooth_shade(True)
-
-        if filepath is None:
-            ps.show()
-        else:
-            ps.screenshot(filepath, True)
-        return
-    
     @staticmethod  
     def polarToCartesian(r, theta, phi):
         theta = np.deg2rad(theta)
@@ -375,6 +353,13 @@ class PSWrapper:
         y = r * np.sin(theta) * np.sin(phi)
         z = r * np.cos(theta)
         return np.array([x, y, z])
+    
+    @staticmethod
+    def cartesianToPolar(x, y, z):
+        r = np.sqrt(x**2 + y**2 + z**2)
+        theta = np.arccos(z/r)
+        phi = np.arctan2(y, x)
+        return r, np.rad2deg(theta), np.rad2deg(phi)
 
     def renderObjectsPS(self, mesh_alpha=0.8, lattice_alpha=1, coord_alpha=1, matrix=None): 
 
@@ -416,26 +401,194 @@ class PSWrapper:
         ps_mesh.set_back_face_policy("cull")
         return ['flatmesh']
     
-    def renderChromaticityTrichromat(self, mesh_alpha=0.8):
+    def renderChromaticityTrichromat(self, mesh_alpha=0.8, height=0.0, revert=True, basis=np.eye(3)):
+        if revert:
+            HMat = self.HMatrix[::-1]
+        else:
+            HMat = self.HMatrix
+        new_verts = (basis@np.asarray(self.mesh.vertices).T).T
+        if revert:
+            new_verts[:, 2] = new_verts[:, 2]* height + ((1-height)*np.sqrt(3)/2)
+        else:
+            new_verts[:, 0] = new_verts[:, 0]* height + ((1-height)*np.sqrt(3)/2)
+            # new_verts[:, 0] = np.array([0]*len(new_verts))
+        new_rgb = np.array(new_verts)
+        new_rgb = (np.linalg.inv(HMat)@(new_rgb.T)).T
+
+        ps_mesh = ps.register_surface_mesh("flatmesh", new_verts, np.asarray(self.mesh.triangles), transparency=mesh_alpha, material='wax', smooth_shade=True)
+        ps_mesh.add_color_quantity("flatmesh_colors", np.clip(new_rgb[:, ::-1], 0, 1), defined_on='vertices', enabled=True)
+        ps_mesh.set_back_face_policy("cull")
+        return ['flatmesh']
+    
+    def renderFlattenExistingMesh(self, mesh_alpha=0.8, height=0.0, basis=np.eye(3)):
+        HMat = self._getmatrixBasisToLum()[:3, :3]
+        new_verts = (basis@np.asarray(self.mesh.vertices).T).T
+        new_verts[:, 2] = new_verts[:, 2]* height + ((1-height)*np.sqrt(3)/2)
+        
+        new_rgb = np.array(new_verts)
+        new_rgb = (np.linalg.inv(HMat)@(new_rgb.T)).T
+
+        pcl = o3d.geometry.PointCloud()
+        pcl.points = o3d.utility.Vector3dVector(new_verts)
+        mesh, point_indices = pcl.compute_convex_hull()
+        mesh.compute_vertex_normals()
+        
+        # 3. set vertex colors
+        mesh.vertex_colors = o3d.utility.Vector3dVector(new_rgb[point_indices])
+        self.add_obj(mesh)
+
+        ps_mesh = ps.register_surface_mesh("flatmesh", np.asarray(mesh.vertices), np.asarray(mesh.triangles), transparency=mesh_alpha, material='wax', smooth_shade=True)
+        ps_mesh.add_color_quantity("flatmesh_colors", np.clip(np.asarray(mesh.vertex_colors)[:, ::-1], 0, 1), defined_on='vertices', enabled=True)
+        ps_mesh.set_back_face_policy("cull")
+        return ['flatmesh']
+    
+    def renderChromaticityTrichromatOld(self, mesh_alpha=0.8):
         new_verts = (self.HMatrix@np.asarray(self.mesh.vertices).T).T
         new_verts[:, 0] = np.array([0]*len(new_verts))
         new_rgb = np.array(new_verts)
-        new_rgb[:, 0] = np.array([0.5]*len(new_rgb))
+        new_rgb[:, 0] = np.array([np.sqrt(3)/2]*len(new_rgb))
         new_rgb = (np.linalg.inv(self.HMatrix)@(new_rgb.T)).T
 
         ps_mesh = ps.register_surface_mesh("flatmesh", new_verts, np.asarray(self.mesh.triangles), transparency=mesh_alpha, material='flat', smooth_shade=True)
         ps_mesh.add_color_quantity("mesh_colors", np.clip(new_rgb, 0, 1), defined_on='vertices', enabled=True)
         ps_mesh.set_back_face_policy("cull")
         return ['flatmesh']
+        
+    
+    def renderFlattened4DMesh(self, arrow_plane_dist):
+        matrix = self._getTransformQUpDir()
+        self.renderFlattenedMesh("flatmesh", self.mesh, matrix, arrow_plane_dist=arrow_plane_dist, mesh_alpha=1)
+        return ["flatmesh"]
+    
+    def renderFlattenedLattice(self, mesh_alpha=0.8, height=0.0):
+        new_verts = (self.HMatrix[::-1]@np.asarray(self.lattice.vertices).T).T
+        new_verts[:, 2] = new_verts[:, 2]* height + ((1-height)*np.sqrt(3)/2)
+        new_rgb = np.array(new_verts)
+        new_rgb = (np.linalg.inv(self.HMatrix[::-1])@(new_rgb.T)).T
 
+        ps_mesh = ps.register_surface_mesh("flatlattice", new_verts, np.asarray(self.lattice.triangles), transparency=mesh_alpha, material='flat', smooth_shade=True)
+        ps_mesh.add_color_quantity("flatlattice_colors", np.clip(new_rgb, 0, 1), defined_on='vertices', enabled=True)
+        ps_mesh.set_back_face_policy("cull")
+        return ['flatlattice']
+   
     def _getCoordBasis(self, name, vecs, coordAlpha=1):
         self.coordBasis = GeometryPrimitives.createCoordinateBasis(vecs, color=[0, 0, 0])
         ps_coord = ps.register_surface_mesh(f"{name}", np.asarray(self.coordBasis.vertices), np.asarray(self.coordBasis.triangles), transparency=coordAlpha) 
         ps_coord.add_color_quantity(f"{name}_colors", np.asarray(self.coordBasis.vertex_colors), defined_on='vertices', enabled=True)
         ps_coord.set_smooth_shade(True)
         return [f"{name}"]
+    
+    def renderLuminanceAxis(self, coordAlpha=1): # assume Z up is Lum
+        name = 'lumAxis'
+        lum_mesh = GeometryPrimitives.createArrow(endpoints=np.array([[0, 0, 0], [0, 0, np.sqrt(3)]]), color=[0, 0, 0])
+        ps_coord = ps.register_surface_mesh(f"{name}", np.asarray(lum_mesh.vertices), np.asarray(lum_mesh.triangles), transparency=coordAlpha) 
+        ps_coord.add_color_quantity(f"{name}_colors", np.asarray(lum_mesh.vertex_colors), defined_on='vertices', enabled=True)
+        ps_coord.set_smooth_shade(True)
+        return [f"{name}"]
+    
+    def renderRotationAroundZ(self, f, dirname, rotations_per_second, r, theta, look_at_origin=[0, 0, 0], video_save_offset=0):
+        os.makedirs(dirname, exist_ok=True)
+        frame_count = int(1/rotations_per_second * 30)
 
+        for j in range(frame_count): 
+            phi = 360 * j / frame_count
+            f(j)
+            point_3d = PSWrapper.polarToCartesian(r, theta, phi)
+            ps.look_at(point_3d, look_at_origin)
+            ps.screenshot(dirname + f"/frame_{frame_count * video_save_offset + j:03d}.png", True)
+        return
+    
+    def renderLoop(self, f, dirname, frames_per_path_dist, num_rotations, r_theta_phi, look_at_origin=[0, 0, 0], video_save_offset=0):
+        os.makedirs(dirname, exist_ok=True)
+        # frame_count = int(1/rotations_per_second * 30)
+        if isinstance(r_theta_phi, (list, tuple, np.ndarray)):
+            r, theta, phi = r_theta_phi[0], r_theta_phi[1], r_theta_phi[2]
 
+        for i in range(num_rotations):
+            for j in range(frames_per_path_dist): 
+                iter = i * frames_per_path_dist + j
+                out = f(iter)
+                if isinstance(out, (list, tuple, np.ndarray)):
+                    r, theta, phi = out[0], out[1], out[2]
+                point_3d = PSWrapper.polarToCartesian(r, theta, phi)
+                ps.look_at(point_3d, look_at_origin)
+                ps.screenshot(dirname + f"/frame_{frames_per_path_dist * video_save_offset + iter:03d}.png", True)
+        return
+    
+    def renderScreenshots(self, f, dirname, frames, video_save_offset=0):
+        os.makedirs(dirname, exist_ok=True)
+        for i in range(frames):
+            f(i)
+            self.ps.screenshot(dirname + f"/frame_{video_save_offset + i:03d}.png", True)
+        return video_save_offset + frames
+
+    def renderTheta(self, f, dirname, rotations_per_second, r, thetas, phi, look_at_origin=[0, 0, 0], video_save_offset=0):
+        os.makedirs(dirname, exist_ok=True)
+        frame_count = int(1/rotations_per_second * 30)
+        
+        for j in range(frame_count): # rotate once
+            f(j)
+            point_3d = PSWrapper.polarToCartesian(r, thetas[j], phi)
+            self.ps.look_at(point_3d, look_at_origin)
+            self.ps.screenshot(dirname + f"/frame_{video_save_offset * frame_count + j:03d}.png", True)
+        return
+    
+    """
+    method == 'linear' or 'arc' (linear interpolation or arc (fixed dist away from origin))
+    """
+    @staticmethod
+    def getPathPoints(r_theta_phi_list, num_steps, method='linear'):
+        cartesian_list = [PSWrapper.polarToCartesian(v[0], v[1], v[2]) for v in r_theta_phi_list]
+        pairs = [(cartesian_list[i], cartesian_list[i+1]) for i in range(len(cartesian_list)-1)]
+        interpolated_vectors = []
+        for j in range(len(pairs)):
+            start = pairs[j][0]
+            end = pairs[j][1]
+            for i in range(num_steps):
+                t = i / num_steps
+                v = start + t * (end - start)
+                interpolated_vector = list(PSWrapper.cartesianToPolar(v[0], v[1], v[2]))
+                if method == 'arc':
+                    interpolated_vector[0] = r_theta_phi_list[0][0] # first r will be the radius for all
+                interpolated_vectors.append(interpolated_vector)
+        return np.array(interpolated_vectors)
+    
+    """
+    r_theta_phi_list - list of tuples (r, theta, phi) for each point in the path
+    """
+    def renderPath(self, dirname, frames_per_path_dist, r_theta_phi_list, path_opacity, look_at_origin=[0, 0, 0], video_save_offset=0):
+        
+        r_theta_phi_interpolated = PSWrapper.getPathPoints(r_theta_phi_list, frames_per_path_dist, method='arc')
+        assert(len(r_theta_phi_interpolated) == len(path_opacity))
+        def render(i):
+            if i == frames_per_path_dist * 3:
+                self.ps.get_surface_mesh("qarrow").set_enabled(True)
+            self.ps.get_surface_mesh("lattice").set_transparency(path_opacity[i])
+            return r_theta_phi_interpolated[i]
+        
+        self.renderLoop(render, dirname, frames_per_path_dist, len(r_theta_phi_list)-1, r_theta_phi_list[0], look_at_origin, video_save_offset)
+
+    def assetProjectChromaticity(self, dirname, rotations_per_second, num_rotations, r, theta, mesh_alpha=1, phi_offset=0, video_save_offset=0):
+        # names = self.renderObjectsPS(mesh_alpha=mesh_alpha)
+        mat4 = np.eye(4)
+        mat4[:3, :3] = np.flip(self.HMatrix, 0)
+        
+        # [ self.ps.get_surface_mesh(s).set_transform(mat4) for s in names ]
+        frame_count = int(1/rotations_per_second * 30)
+        total_frames = frame_count * num_rotations
+
+        def renderSquashing(i):
+            name = self.renderChromaticityTrichromat(mesh_alpha=mesh_alpha, height=1 - (i/total_frames))
+            self.ps.get_surface_mesh(name[0]).set_transparency(mesh_alpha + ((1-mesh_alpha)*i/total_frames))
+
+        def renderNothing(i):
+            pass
+        
+        self.renderLoop(renderSquashing, dirname, rotations_per_second, num_rotations, r, theta, phi_offset, look_at_origin=[0, 0, np.sqrt(3)/2], video_save_offset=video_save_offset)
+        thetas = np.cos(np.linspace(0, np.pi-0.03, frame_count)) * theta/2 + theta/2
+        self.renderTheta(renderNothing, dirname, rotations_per_second, r, thetas, phi_offset, look_at_origin=[0, 0, np.sqrt(3)/2], video_save_offset=video_save_offset+1)
+
+        return
 
     def assetRotationAroundLum(self, dirname, rotations_per_second, num_rotations, r, theta, mesh_alpha=0.8, lattice_alpha=1):
         names = self.renderObjectsPS(mesh_alpha=mesh_alpha, lattice_alpha=lattice_alpha)
@@ -477,7 +630,7 @@ class PSWrapper:
         ps_line.add_color_quantity("qarrow_colors", np.asarray(mesh.vertex_colors), defined_on='vertices', enabled=True)
         return ["qarrow"]
     
-    def __getGridOfArrows(self, top_arrow_dist=1,  arrow_plane_dist=1.25, num_points=8):
+    def renderGridOfArrows(self, top_arrow_dist=1,  arrow_plane_dist=1.25, num_points=8, flip_arrow_dir=False):
         width = 0.7
         y_values = np.linspace(-width, width, num_points) 
         z_values = np.linspace(-width, width, num_points) 
@@ -486,7 +639,12 @@ class PSWrapper:
         mesh = []
         for i in range(num_points):
             for j in range(num_points):
-                mesh +=[GeometryPrimitives.createArrow(endpoints=[np.array([y_mesh[i, j], z_mesh[i, j], -top_arrow_dist]), np.array([y_mesh[i, j], z_mesh[i, j], arrow_plane_dist])], radius=0.025/10, resolution=20, color=[0, 0, 0])]
+                # switch ends
+                if flip_arrow_dir:
+                    mesh +=[GeometryPrimitives.createArrow(endpoints=[np.array([y_mesh[i, j], z_mesh[i, j], arrow_plane_dist]), np.array([y_mesh[i, j], z_mesh[i, j], -top_arrow_dist])], radius=0.025/10, resolution=20, color=[0, 0, 0])]
+
+                else:
+                    mesh +=[GeometryPrimitives.createArrow(endpoints=[np.array([y_mesh[i, j], z_mesh[i, j], -top_arrow_dist]), np.array([y_mesh[i, j], z_mesh[i, j], arrow_plane_dist])], radius=0.025/10, resolution=20, color=[0, 0, 0])]
         mesh = GeometryPrimitives.collapseMeshObjects(mesh)
         ps_arrows = ps.register_surface_mesh("grid_arrows", np.asarray(mesh.vertices), np.asarray(mesh.triangles), transparency=1,smooth_shade=True) 
         ps_arrows.add_color_quantity("grid_arrows_colors", np.asarray(mesh.vertex_colors), defined_on='vertices', enabled=True)
@@ -509,24 +667,69 @@ class PSWrapper:
         matrix = np.linalg.inv(getCylinderTransform([np.array([0, 0, 0]), basisLMSQ/np.linalg.norm(basisLMSQ)])) # go from Q to the basis [1, 0, 0]
         return matrix
     
-    def __getLineOfArrows(self, pos_line, num_points=8): 
+    def getLineOfArrows(self, pos_line, num_points=8): 
+        length = 1
+        basisLMSQ = np.array([[0, 0, 1]]) # L cone
+        if self.dispBasisType == DisplayBasisType.MAXBASIS:
+            basisLMSQ = ((self.HMatrix@self.coneToBasis)@basisLMSQ.T).T[0]
+        else:
+            basisLMSQ = (self.HMatrix@basisLMSQ.T).T[0]
+        
+        basisLMSQ[0] = 0
+        matrix = np.linalg.inv(getCylinderTransform([np.array([0, 0, 0]), basisLMSQ/np.linalg.norm(basisLMSQ)])) # go from Q to the basis [0, 0, 1]
         
         width = 0.8
         y_values = np.linspace(-width, width, num_points)
         
         mesh = []
         for i in range(num_points):
-            mesh +=[GeometryPrimitives.createArrow(endpoints=[np.array([0, y_values[i], -length]), np.array([0, y_values[i], pos_line])], radius=0.025/10, resolution=20, color=[0, 0, 0])]
+            mesh +=[GeometryPrimitives.createArrow(endpoints=[np.array([0, -length, y_values[i]]), np.array([0, pos_line, y_values[i]])], radius=0.025/10, resolution=20, color=[0, 0, 0])]
         
         mesh = GeometryPrimitives.collapseMeshObjects(mesh)
         ps_arrows = ps.register_surface_mesh("grid_arrows", np.asarray(mesh.vertices), np.asarray(mesh.triangles), transparency=1,smooth_shade=True) 
         ps_arrows.add_color_quantity("grid_arrows_colors", np.asarray(mesh.vertex_colors), defined_on='vertices', enabled=True)
+        return matrix, ["grid_arrows"]
+    
+    def getAchromaticDichromatArrow(self, pos_line):
+        length = 1
+        mesh = GeometryPrimitives.createArrow(endpoints=[np.array([0, -length, 0]), np.array([0, pos_line, 0])], radius=0.025/10, resolution=20, color=[0, 0, 0])
+        ps_arrows = ps.register_surface_mesh("achromatic_arrow", np.asarray(mesh.vertices), np.asarray(mesh.triangles), transparency=1,smooth_shade=True) 
+        ps_arrows.add_color_quantity("achromatic_arrow_colors", np.asarray(mesh.vertex_colors), defined_on='vertices', enabled=True)
+        return ["achromatic_arrow"]
+    
+    def getDichromatLine(self, pos_line): # L cone
+        y_values = np.linspace(-0.8, 0.8, 100)
+        nodes = np.array([[0, pos_line, y] for y in y_values])
+        edges = np.array([[i, i+1] for i in range(len(nodes)-1)])
+        
+        colors =np.array([np.array([1, 1, 0]) * (1-t) + t*np.array([0.5, 0.5, 0.5]) for t in np.linspace(0, 1, len(nodes)//2)] + [np.array([0.5, 0.5, 0.5]) * (1-t) + t*np.array([0, 0, 1]) for t in np.linspace(0, 1, len(nodes)//2)])
+
+        # visualize!
+        ps_net = ps.register_curve_network("dichromat_line", nodes, edges, radius=0.01)
+        ps_net.add_color_quantity("dichromat_line_colors", colors/1.5, defined_on='nodes', enabled=True)
+        return ["dichromat_line"]
+
+    def lineOfArrows(self, num_points=9):
+        ps.set_ground_plane_mode("none")
+        ps.set_background_color([1, 1, 1, 0])
+        ps.set_transparency_mode('pretty')
+        ps.set_SSAA_factor(2)
+        ps.look_at(np.array([4, 0, 0]), [0, 0, 0])
+
+        pos_line = 1.25
+        matrix, names = self.getLineOfArrows(pos_line, num_points)
+        names += self.renderChromaticityTrichromatOld(mesh_alpha=1)
+        names += self.getDichromatLine(pos_line)
+        names += self.getAchromaticDichromatArrow(pos_line)
+
+        ps.get_surface_mesh("flatmesh").set_transform(matrix)
+        return names, matrix
 
     def figureGridOfArrows(self, top_arrow_dist, arrow_plane_dist, z, theta, r, mesh_alpha=0.8, lattice_alpha=1):
 
         self.renderObjectsPS(mesh_alpha=mesh_alpha, lattice_alpha=lattice_alpha)
-        self.__getGridOfArrows(top_arrow_dist, arrow_plane_dist, num_points=6)
-        matrix = self._getTransformQUpDir()
+        self.renderGridOfArrows(top_arrow_dist, arrow_plane_dist, num_points=6)
+        matrix, names = self._getTransformQUpDir()
         self.renderFlattenedMesh("flatmesh", self.mesh, matrix, arrow_plane_dist=arrow_plane_dist, mesh_alpha=1)
         ps.set_up_dir("neg_z_up")
         ps.set_front_dir("x_front")
@@ -621,7 +824,7 @@ class PSWrapper:
     def assetRotatePointCloud(self, dirname, rotations_per_second, num_rotations, r, theta, mesh_alpha=0.8, lattice_alpha=1): 
         self.renderObjectsPS(mesh_alpha=mesh_alpha, lattice_alpha=lattice_alpha)
         self.renderQArrow()
-        matrix = self.__getGridOfArrows()
+        matrix = self.renderGridOfArrows()
         os.makedirs(dirname, exist_ok=True)
         frame_count = int(1/rotations_per_second * 30)
         total_frames = frame_count * num_rotations
@@ -648,7 +851,7 @@ class PSWrapper:
 
         os.makedirs(dirname, exist_ok=True)
         frame_count = int(1/rotations_per_second * 30)
-        transforms = self.__getIntermediateTransforms(frame_count)
+        transforms = self._getIntermediateTransforms(frame_count)
 
         ps_mesh = ps.get_surface_mesh("mesh")
         ps_lattice = ps.get_surface_mesh("lattice")
@@ -725,6 +928,34 @@ class PSWrapper:
         rotate_once(2, frame_count)
 
         exportAndPlay(dirname)
+        return
+    
+
+    def transformLMStoRGB(self, dirname, rotations_per_second, r, theta, mesh_alpha=0.8, lattice_alpha=1, phi_offset=0): 
+        HMat = self._getmatrixBasisToLum()
+        self.renderObjectsPS(mesh_alpha=mesh_alpha, lattice_alpha=lattice_alpha, matrix=HMat)
+
+        os.makedirs(dirname, exist_ok=True)
+        frame_count = int(1/rotations_per_second * 30)
+        transforms_LMS, transforms_RGB = self._getIntermediateTransformsLMSRGB(frame_count)
+
+        ps_mesh = ps.get_surface_mesh("mesh")
+        names = self._getCoordBasis("RGB_coords", ((HMat@transforms_RGB[0])[:3, :3]).T, 1)
+        names += self._getCoordBasis("LMS_coords", ((HMat@transforms_LMS[0])[:3, :3]).T, 1)
+
+        def doNothing(j):
+            pass
+
+        def expandBasis(j):
+            [ps.get_surface_mesh(n).remove() for n in names]
+            ps_mesh.set_transform(HMat@transforms_LMS[j])
+            self._getCoordBasis("RGB_coords", ((HMat@transforms_RGB[j])[:3, :3]).T)
+            self._getCoordBasis("LMS_coords", ((HMat@transforms_LMS[j])[:3, :3]).T)
+        
+
+        self.renderRotationAroundZ(doNothing, dirname, rotations_per_second, r, theta, look_at_origin=[0, 0, np.sqrt(3)/2])
+        self.renderRotationAroundZ(expandBasis, dirname, rotations_per_second, r, theta, look_at_origin=[0, 0, np.sqrt(3)/2], video_save_offset=1)
+        self.renderRotationAroundZ(doNothing, dirname, rotations_per_second, r, theta, look_at_origin=[0, 0, np.sqrt(3)/2], video_save_offset=2)
         return
     
 
