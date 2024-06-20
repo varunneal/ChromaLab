@@ -331,7 +331,25 @@ class Observer:
         m_cone = Cone.m_cone(wavelengths) ##Cone.cone(530, wavelengths=wavelengths, template="neitz", od=0.35)
         s_cone = Cone.s_cone(wavelengths) ##Cone.s_cone(wavelengths=wavelengths)
         return Observer([s_cone, m_cone, q_cone, l_cone], illuminant=illuminant, verbose=verbose)
+    
+    @staticmethod
+    def protanope(wavelengths=None, illuminant=None):
+        m_cone = Cone.m_cone(wavelengths)
+        s_cone = Cone.s_cone(wavelengths)
+        return Observer([s_cone, m_cone], illuminant=illuminant)
+    
+    @staticmethod
+    def deuteranope(wavelengths=None, illuminant=None):
+        l_cone = Cone.l_cone(wavelengths)
+        s_cone = Cone.s_cone(wavelengths)
+        return Observer([s_cone, l_cone], illuminant=illuminant)
 
+    @staticmethod
+    def tritanope(wavelengths=None, illuminant=None):
+        m_cone = Cone.m_cone(wavelengths)
+        l_cone = Cone.l_cone(wavelengths)
+        return Observer([m_cone, l_cone], illuminant=illuminant)
+    
     def get_whitepoint(self, wavelengths: Optional[npt.NDArray] = None):
         sensor_matrix = self.get_sensor_matrix(wavelengths)
 
