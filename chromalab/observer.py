@@ -331,7 +331,38 @@ class Observer:
         m_cone = Cone.m_cone(wavelengths) ##Cone.cone(530, wavelengths=wavelengths, template="neitz", od=0.35)
         s_cone = Cone.s_cone(wavelengths) ##Cone.s_cone(wavelengths=wavelengths)
         return Observer([s_cone, m_cone, q_cone, l_cone], illuminant=illuminant, verbose=verbose)
+    
+    @staticmethod
+    def protanope(wavelengths=None, illuminant=None):
+        m_cone = Cone.m_cone(wavelengths)
+        s_cone = Cone.s_cone(wavelengths)
+        return Observer([s_cone, m_cone], illuminant=illuminant)
+    
+    @staticmethod
+    def deuteranope(wavelengths=None, illuminant=None):
+        l_cone = Cone.l_cone(wavelengths)
+        s_cone = Cone.s_cone(wavelengths)
+        return Observer([s_cone, l_cone], illuminant=illuminant)
 
+    @staticmethod
+    def tritanope(wavelengths=None, illuminant=None):
+        m_cone = Cone.m_cone(wavelengths)
+        l_cone = Cone.l_cone(wavelengths)
+        return Observer([m_cone, l_cone], illuminant=illuminant)
+    
+    @staticmethod
+    def bird(name, wavelengths=None, illuminant=None, verbose=False):
+        """
+        bird: bird types are ['UVS-Average-Bird.csv', 'UVS-bluetit.csv', 'UVS-Starling.csv', 'VS-Average-Bird.csv', 'VS-Peafowl.csv']
+        """
+        with resources.path("chromalab.cones.birds", f"{name}.csv") as data_path:
+            bird_data = pd.read_csv(data_path, header=None)
+        all_cones = []
+        for i in range(1, 5):
+            reflectances = bird_data.iloc[:, [0, i]].to_numpy()
+            all_cones += [Cone(reflectances).interpolate_values(wavelengths)]
+        return Observer(all_cones, illuminant=illuminant, verbose=verbose)
+        
     def get_whitepoint(self, wavelengths: Optional[npt.NDArray] = None):
         sensor_matrix = self.get_sensor_matrix(wavelengths)
 
