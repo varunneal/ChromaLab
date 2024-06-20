@@ -175,7 +175,7 @@ class GeometryPrimitives:
     def createCoordinateBasis(basis, radius=0.025/2, resolution=20, color=[0, 0, 0])->o3d.geometry.TriangleMesh:
         meshes = []
         for i, b in enumerate(basis):
-            mesh = GeometryPrimitives.createArrow(endpoints=[[0, 0, 0], b], radius=radius, resolution=resolution, color=color)
+            mesh = GeometryPrimitives.createArrow(endpoints=[[0, 0, 0], b], radius=radius, resolution=resolution, color=color[i])
             meshes.append(mesh)
         mesh = GeometryPrimitives.collapseMeshObjects(meshes)
         return mesh
@@ -471,8 +471,11 @@ class PSWrapper:
         ps_mesh.set_back_face_policy("cull")
         return ['flatlattice']
    
-    def _getCoordBasis(self, name, vecs, coordAlpha=1):
-        self.coordBasis = GeometryPrimitives.createCoordinateBasis(vecs, color=[0, 0, 0])
+    def _getCoordBasis(self, name, vecs, colors=[0, 0, 0], coordAlpha=1, radius=0.025/2):
+        if not isinstance(colors[0], (list, tuple, np.ndarray)):
+            colors = np.repeat(np.array(colors), len(vecs), axis=0)
+        assert(len(vecs) == len(colors))
+        self.coordBasis = GeometryPrimitives.createCoordinateBasis(vecs, color=colors, radius=radius)
         ps_coord = ps.register_surface_mesh(f"{name}", np.asarray(self.coordBasis.vertices), np.asarray(self.coordBasis.triangles), transparency=coordAlpha) 
         ps_coord.add_color_quantity(f"{name}_colors", np.asarray(self.coordBasis.vertex_colors), defined_on='vertices', enabled=True)
         ps_coord.set_smooth_shade(True)

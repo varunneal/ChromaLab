@@ -41,13 +41,18 @@ class PlumageDataLoader(DataLoader):
         self.observer = observer
         self.root = root_path
         self.data_range = [1, 900]
-        self.data = np.load(self.root)
-        self.wavelengths = np.arange(300, 700 + 10, 10)
+        data = np.load(self.root, allow_pickle=True)
+        
+
+        self.wavelengths = data['wavelengths']
+        self.spectral_names = data['spectra_names']
+        self.per_bird_data = data['spectra_values']
+        self.data = np.concatenate(self.per_bird_data, axis=0)
 
     def getConeResponses(self, isWhitened=True):
         if hasattr(self, 'cone_responses'):
             return self.cone_responses
-        pts = self.observer.observer(self.data.T).T
+        pts = (self.observer.get_normalized_sensor_matrix()@self.data.T).T
         if isWhitened:
             log_usml = np.log10(pts)
             pts = log_usml - np.mean(log_usml, axis=0)
@@ -71,7 +76,7 @@ class NTIREDataLoader(DataLoader):
     def loadCube(path):
         """
         Load a spectral cube from Matlab HDF5 format .mat file
-        :param path: Path of souce file
+        :param path: Path of source file
         :return: spectral cube (cube) and bands (bands)
         """
         with h5py.File(path, 'r') as mat:
@@ -155,7 +160,7 @@ class RudermanAnalysis:
 
     def plotPCA4D(self, viz, LMS_to_RGB):
         pca_comps = transformToChromaticity(self.pca_cone.components_)
-        viz._getCoordBasis('pcacomps', pca_comps, coordAlpha=1)
+        viz._getCoordBasis('pcacomps', pca_comps, coordAlpha=1, colors=[[0, 0, 0], [0, 0, 1], [1, 0, 0], [0, 0, 0]],radius=0.025/8 ) # first axis is luminance, which is nothing.
 
         lmsqs = self.data_loader.getConeResponses()
         lmsqs = lmsqs.reshape(-1, 4)[::100, :]
