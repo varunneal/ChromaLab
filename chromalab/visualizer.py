@@ -236,6 +236,7 @@ class PSWrapper:
 
     def loadPrinterGamut(self, filename, color=np.array([1, 0, 0])):
         gamut_data = np.load(filename)
+
         if self.dim > 3:
             basis_gamut = (self.HMatrix@self.coneToBasis@gamut_data.T).T[:, 1:]
         else: 
@@ -249,6 +250,47 @@ class PSWrapper:
         ps_mesh.set_smooth_shade(True)
 
         return alpha_mesh.volume
+
+    def renderPrinterGamut(self, name, points, color=np.array([0.5, 0.5, 0.5]), mat=np.eye(4)):
+        
+        if self.dim > 3:
+            basis_gamut = (self.HMatrix@self.coneToBasis@points.T).T[:, 1:]
+        else: 
+            basis_gamut = (self.HMatrix@self.coneToBasis@points.T).T
+
+        alpha_mesh = alphashape.alphashape(basis_gamut, 1)
+        
+        colors = np.repeat([color], len(alpha_mesh.vertices), axis=0).reshape(-1, 3)
+        ps_mesh = ps.register_surface_mesh(f"{name}_printer_mesh", np.asarray(alpha_mesh.vertices), np.asarray(alpha_mesh.faces), transparency=1, material='wax') 
+        ps_mesh.add_color_quantity(f"{name}_printer_mesh_colors", colors, defined_on='vertices', enabled=True)
+        # ps_mesh.set_back_face_policy("cull")
+        ps_mesh.set_smooth_shade(True)
+
+        ps_mesh.set_transform(mat)
+        return [f"{name}_printer_mesh"],  alpha_mesh.volume
+
+    def renderPrinterGamutConvexHull(self, name, points, color=np.array([0.5, 0.5, 0.5]), mat=np.eye(4)):
+        
+        if self.dim > 3:
+            basis_gamut = (self.HMatrix@self.coneToBasis@points.T).T[:, 1:]
+        else: 
+            basis_gamut = (self.HMatrix@self.coneToBasis@points.T).T
+
+        pcl = o3d.geometry.PointCloud()
+        pcl.points = o3d.utility.Vector3dVector(basis_gamut)
+        mesh, point_indices = pcl.compute_convex_hull()
+        mesh.compute_vertex_normals()
+        
+        # 3. set vertex colors
+        colors = np.repeat([color], len(point_indices), axis=0).reshape(-1, 3)
+    
+        ps_mesh = ps.register_surface_mesh(f"{name}_printer_mesh", np.asarray(mesh.vertices), np.asarray(mesh.triangles), transparency=1, material='wax') 
+        ps_mesh.add_color_quantity(f"{name}_printer_mesh_colors", colors, defined_on='vertices', enabled=True)
+        # ps_mesh.set_back_face_policy("cull")
+        ps_mesh.set_smooth_shade(True)
+
+        ps_mesh.set_transform(mat)
+        return [f"{name}_printer_mesh"]
 
     def _getIntermediateTransforms(self, num_steps):
         transforms = []
@@ -386,11 +428,12 @@ class PSWrapper:
         HMat[:3, :3] = hmatrix
         return HMat
     
-    def renderPointCloud(self, points, rgbs, radius=0.001):
-        points = self.ps.register_point_cloud("points", points)
-        points.add_color_quantity("point_colors", rgbs, enabled=True)
+    def renderPointCloud(self, name, points, rgbs, radius=0.001, mat=np.eye(4)):
+        points = self.ps.register_point_cloud(f"{name}", points)
+        points.add_color_quantity(f"{name}_colors", rgbs, enabled=True)
         points.set_radius(radius, relative=False)
-        return ["points"]
+        points.set_transform(mat)
+        return [f"{name}"]
     
     def renderFlattenedMesh(self, name, item, matrix, arrow_plane_dist=1.5, mesh_alpha=0.8):
         new_verts = matrix[:3, :3]@(np.asarray(item.vertices).T)
@@ -473,7 +516,7 @@ class PSWrapper:
    
     def _getCoordBasis(self, name, vecs, colors=[0, 0, 0], coordAlpha=1, radius=0.025/2):
         if not isinstance(colors[0], (list, tuple, np.ndarray)):
-            colors = np.repeat(np.array(colors), len(vecs), axis=0)
+            colors = np.repeat(np.array([colors]), len(vecs), axis=0)
         assert(len(vecs) == len(colors))
         self.coordBasis = GeometryPrimitives.createCoordinateBasis(vecs, color=colors, radius=radius)
         ps_coord = ps.register_surface_mesh(f"{name}", np.asarray(self.coordBasis.vertices), np.asarray(self.coordBasis.triangles), transparency=coordAlpha) 
@@ -618,6 +661,20 @@ class PSWrapper:
 
         exportAndPlay(dirname)
 
+    def renderConfusionLine(self, pt, radius=0.005, resolution=50, transparency=0.8):
+        
+        mesh = GeometryPrimitives.createCylinder(endpoints=np.array([[pt[0], pt[1], -1], [pt[0], pt[1], 1]]), radius=radius, resolution=resolution, color=[0, 0, 0])
+
+        ps_line = ps.register_surface_mesh("confusion_line", np.asarray(mesh.vertices), np.asarray(mesh.triangles), transparency=transparency, smooth_shade=True) 
+        ps_line.add_color_quantity("confusion_line_colors", np.asarray(mesh.vertex_colors), defined_on='vertices', enabled=True)
+        return ["confusion_line"]
+
+    def renderSphereInMiddle(self, radius=0.1, resolution=50, transparency=0.8):
+        mesh = GeometryPrimitives.createSphere(center=[0, 0, 0], radius=radius, resolution=resolution, color=[0, 0, 0])
+
+        ps_sphere = ps.register_surface_mesh("sphere", np.asarray(mesh.vertices), np.asarray(mesh.triangles), transparency=transparency, smooth_shade=True) 
+        ps_sphere.add_color_quantity("sphere_colors", np.asarray(mesh.vertex_colors), defined_on='vertices', enabled=True)
+        return ["sphere"]
 
     def renderQArrow(self, radius=0.005, resolution=50, transparency=0.8):
         length = 1 * 0.05

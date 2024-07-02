@@ -35,4 +35,7 @@ MANIFEST
 /notebooks/assets/outputs/*
 /notebooks/assets/data/*
 /notebooks/assc-27/data/*
+/notebooks/assc-27/outputs/*
 .DS_Store
+/notebooks/data/*
+/notebooks/*/data/*

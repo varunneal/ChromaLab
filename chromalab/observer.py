@@ -282,6 +282,7 @@ class Cone(Spectra):
     def q_cone(wavelengths=None, template="neitz"):
         # 545 per nathan & merbs 92
         return Cone.cone(545, template=template, od=0.35, wavelengths=wavelengths)
+    
 
 
 def get_m_transitions(m, wavelengths, both_types=True):
@@ -315,6 +316,13 @@ class Observer:
         self.normalized_sensor_matrix = self.get_normalized_sensor_matrix(total_wavelengths)
 
         self.verbose = verbose
+
+
+    @staticmethod
+    def dichromat(wavelengths=None, illuminant=None):
+        s_cone = Cone.s_cone(wavelengths)
+        m_cone = Cone.m_cone(wavelengths)
+        return Observer([s_cone, m_cone], illuminant=illuminant)
 
     @staticmethod
     def trichromat(wavelengths=None, illuminant=None):
