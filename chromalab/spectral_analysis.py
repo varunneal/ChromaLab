@@ -158,17 +158,46 @@ class RudermanAnalysis:
         self.pca_cone = self._pca_analysis(self.points, self.dim)
         self.spectra_to_PCA = self.pca_cone.components_@(self.observer.get_normalized_sensor_matrix()) # 4x4 LMSQ to PCA
 
-    def plotPCA4D(self, viz, LMS_to_RGB):
+    def plotTransformedConeFunds(self):
+        fig, ax = plt.subplots()
+        colors = ['gray', 'blue', 'r', 'y'] # TODO: change colors
+        for i in range(4):
+            ax.plot(self.observer.wavelengths, self.spectra_to_PCA[i], label=f"PCA Component {i}", c=colors[i])
+        ax.legend()
+        plt.show()
+
+    def plotPCA4D(self, viz, LMS_to_RGB, sample_rate=100):
         pca_comps = transformToChromaticity(self.pca_cone.components_)
-        viz._getCoordBasis('pcacomps', pca_comps, coordAlpha=1, colors=[[0, 0, 0], [0, 0, 1], [1, 0, 0], [0, 0, 0]],radius=0.025/8 ) # first axis is luminance, which is nothing.
+        self.pca_cone.explained_variance_
+        viz._getCoordBasis('pcacomps', pca_comps[1:], coordAlpha=1, colors=[[0, 0, 1], [1, 0, 0], [0, 0, 0]],radius=0.025/16 ) # first axis is luminance, which is nothing.
 
         lmsqs = self.data_loader.getConeResponses()
-        lmsqs = lmsqs.reshape(-1, 4)[::100, :]
+        lmsqs = lmsqs.reshape(-1, 4)[::sample_rate, :]
         rgbs = np.clip((LMS_to_RGB@(lmsqs[:, [0, 1, 3]].T)).T, 0, 1)
 
         chrom_pts = transformToChromaticity(lmsqs)
-        viz.renderPointCloud(chrom_pts, rgbs, radius=0.001)
+        viz.renderPointCloud("pca", chrom_pts, rgbs, radius=0.001)
         return 
+    
+    def plotPCA4DwUV(self, viz):
+        pca_comps = transformToChromaticity(self.pca_cone.components_)
+        viz._getCoordBasis('pcacomps',  pca_comps[1:], coordAlpha=1, colors=[[0, 0, 1], [1, 0, 0], [0, 0, 0]],radius=0.025/16 ) # first axis is luminance, which is nothing.
+        
+        lmsqs = self.data_loader.getConeResponses()
+        rgbs = np.array(convert_refs_to_rgbs(self.data_loader.data[:, 10:], np.arange(400, 700 + 10, 10)))
+
+        chrom_pts = transformToChromaticity(lmsqs)
+        viz.renderPointCloud("pca", chrom_pts, rgbs, radius=0.001)
+        return 
+    
+    def plotExplainedRatio(self):
+        fig, ax = plt.subplots()
+        ax.plot([1, 2, 3, 4], np.cumsum(self.pca_cone.explained_variance_ratio_))
+        ax.set_xticks([1, 2, 3, 4])
+        # ax.set_yticks(np.arange(0.7, 1.0, 0.05))
+        ax.set_xlabel('Number of Components')
+        ax.set_ylabel('Cumulative Explained Variance')
+        plt.show()
 
     
     def displaySpatialPCA(self, filename=None):
