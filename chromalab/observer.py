@@ -498,6 +498,14 @@ class Observer:
         hull = ConvexHull(chrom_points) # chromaticity coordinates now
         self._full_indices = hull.vertices
         return chrom_points[self._full_indices], np.array(self.rgbs)[self._full_indices]
+    
+    def get_full_colors_in_activations(self) -> Union[npt.NDArray, npt.NDArray]:
+        if not hasattr(self, 'point_cloud'):
+            self.__find_optimal_colors()
+        chrom_points = transformToChromaticity(self.point_cloud)
+        hull = ConvexHull(chrom_points) # chromaticity coordinates now
+        self._full_indices = hull.vertices
+        return self.point_cloud[self._full_indices], np.array(self.rgbs)[self._full_indices]
 
     def getFacetIdxFromIdx(self, idx) -> tuple:
         newidx = idx % int(len(self.point_cloud)/2)
