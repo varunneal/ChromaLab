@@ -45,7 +45,7 @@ class MaxBasis:
         self.HMatrix = getHeringMatrix(observer.dimension)
 
         self.__getMaximalBasis()
-        self.__findConeToBasisTransform(isReverse=True)
+        # self.__findConeToBasisTransform(isReverse=True)
 
 
     def __computeVolume(self, wavelengths):
@@ -64,6 +64,7 @@ class MaxBasis:
         else:
             refs = np.array([Spectra.from_transitions( x, 1 if i == 0 else 0, self.wavelengths).data for i, x in enumerate(transitions)])
 
+        self.cone_to_maxbasis = np.linalg.inv(np.dot(self.matrix, refs.T))
         self.maximal_matrix = np.dot(np.linalg.inv(np.dot(self.matrix, refs.T)), self.matrix)
 
         self.maximal_sensors = []
@@ -74,15 +75,20 @@ class MaxBasis:
         return self.maximal_sensors, self.maximal_observer
 
     
-    def __findConeToBasisTransform(self, isReverse=True):
-        sortedCutpoints = self.cutpoints[:self.dimension - 1]
-        sortedCutpoints.sort()
-        transitions = self.getCutpointTransitions(sortedCutpoints)
-        if isReverse:
-            refs = np.array([Spectra.from_transitions( x, 1 if i == 0 else 0, self.wavelengths).data for i, x in enumerate(transitions)])[::-1]
-        else:
-            refs = np.array([Spectra.from_transitions(x, 1 if i == 0 else 0, self.wavelengths).data for i, x in enumerate(transitions)])
-        self.cone_to_maxbasis = np.linalg.inv(np.dot(self.matrix, refs.T))
+    # def __findConeToBasisTransform(self, isReverse=True):
+        # sortedCutpoints = self.cutpoints[:self.dimension - 1]
+        # sortedCutpoints.sort()
+        # transitions = self.getCutpointTransitions(sortedCutpoints)
+        # if isReverse:
+        #     refs = np.array([Spectra.from_transitions( x, 1 if i == 0 else 0, self.wavelengths).data for i, x in enumerate(transitions)])[::-1]
+        # else:
+        #     refs = np.array([Spectra.from_transitions(x, 1 if i == 0 else 0, self.wavelengths).data for i, x in enumerate(transitions)])
+        # self.cone_to_maxbasis = np.linalg.inv(np.dot(self.matrix, refs.T))
+
+
+        # new function
+        # self.cone_to_maxbasis = np.linalg.inv(self.maximal_matrix@self.matrix)
+
 
     def __findMaxCutpoints(self, rng=None):
         if self.dimension == 2:

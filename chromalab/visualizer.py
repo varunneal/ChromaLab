@@ -203,7 +203,7 @@ class PSWrapper:
         LATTICE = 2
         BOTH = 3
 
-    def __init__(self, observer, maxbasis, itemsToDisplay=ItemsToDisplay.MESH, displayBasis=DisplayBasisType.CONE, verbose=False):
+    def __init__(self, observer, maxbasis, itemsToDisplay=ItemsToDisplay.MESH, displayBasis=DisplayBasisType.CONE, verbose=False, mat='flat'):
         self.verbose = verbose
         self.observer = observer
         self.maxBasis = maxbasis
@@ -274,7 +274,7 @@ class PSWrapper:
         if self.dim > 3:
             basis_gamut = (self.HMatrix@self.coneToBasis@points.T).T[:, 1:]
         else: 
-            basis_gamut = (self.HMatrix@self.coneToBasis@points.T).T
+            basis_gamut = (self.coneToBasis@points.T).T
 
         pcl = o3d.geometry.PointCloud()
         pcl.points = o3d.utility.Vector3dVector(basis_gamut)
@@ -342,7 +342,7 @@ class PSWrapper:
         return transforms_LMS, transforms_RGB
 
     def __createLattice(self, basis=None)->o3d.geometry.TriangleMesh:
-        refs, points, rgbs, lines = self.maxBasis.getDiscreteRepresentation()
+        refs, points, rgbs, lines = self.maxBasis.getDiscreteRepresentation(reverse=True)
         
         if self.dispBasisType == DisplayBasisType.CONE:
             points = (np.linalg.inv(self.maxBasis.get_cone_to_maxbasis_transform())@points.T).T
@@ -382,7 +382,7 @@ class PSWrapper:
         mesh.compute_vertex_normals()
         
         # 3. set vertex colors
-        mesh.vertex_colors = o3d.utility.Vector3dVector(rgbs[point_indices])
+        mesh.vertex_colors = o3d.utility.Vector3dVector(np.flip(rgbs[point_indices], 1))
         self.add_obj(mesh)
         
         return mesh
@@ -410,11 +410,13 @@ class PSWrapper:
         if self.itemsToDisplay == PSWrapper.ItemsToDisplay.MESH or self.itemsToDisplay == PSWrapper.ItemsToDisplay.BOTH:
             
             ps_mesh = ps.register_surface_mesh("mesh", np.asarray(self.mesh.vertices), np.asarray(self.mesh.triangles), transparency=mesh_alpha, material='wax', smooth_shade=True) 
+            # ps_mesh.set_material("phong")
             ps_mesh.add_color_quantity("mesh_colors", np.asarray(self.mesh.vertex_colors), defined_on='vertices', enabled=True)
             names +=["mesh"]
             # ps_mesh.center_bounding_box()
         if self.itemsToDisplay == PSWrapper.ItemsToDisplay.LATTICE or self.itemsToDisplay == PSWrapper.ItemsToDisplay.BOTH:
             ps_lattice = ps.register_surface_mesh("lattice", np.asarray(self.lattice.vertices), np.asarray(self.lattice.triangles), transparency=lattice_alpha) 
+            # ps_mesh.set_material("phong")
             ps_lattice.add_color_quantity("lattice_colors", np.asarray(self.lattice.vertex_colors), defined_on='vertices', enabled=True)
             names +=["lattice"]
             # ps_lattice.set_transform(ps_mesh.get_transform())
@@ -468,8 +470,9 @@ class PSWrapper:
         new_verts = (basis@np.asarray(self.mesh.vertices).T).T
         new_verts[:, 2] = new_verts[:, 2]* height + ((1-height)*np.sqrt(3)/2)
         
-        new_rgb = np.array(new_verts)
-        new_rgb = (np.linalg.inv(HMat)@(new_rgb.T)).T
+        lum_colors = (basis@np.asarray(self.mesh.vertex_colors).T).T
+        lum_colors[:, 2] = lum_colors[:, 2]* height + ((1-height)*np.sqrt(3)/2)
+        new_rgb = (np.linalg.inv(basis)@(lum_colors.T)).T
 
         pcl = o3d.geometry.PointCloud()
         pcl.points = o3d.utility.Vector3dVector(new_verts)
@@ -481,7 +484,7 @@ class PSWrapper:
         self.add_obj(mesh)
 
         ps_mesh = ps.register_surface_mesh("flatmesh", np.asarray(mesh.vertices), np.asarray(mesh.triangles), transparency=mesh_alpha, material='wax', smooth_shade=True)
-        ps_mesh.add_color_quantity("flatmesh_colors", np.clip(np.asarray(mesh.vertex_colors)[:, ::-1], 0, 1), defined_on='vertices', enabled=True)
+        ps_mesh.add_color_quantity("flatmesh_colors", np.clip(np.asarray(mesh.vertex_colors), 0, 1), defined_on='vertices', enabled=True)
         ps_mesh.set_back_face_policy("cull")
         return ['flatmesh']
     
@@ -566,6 +569,21 @@ class PSWrapper:
         for i in range(frames):
             f(i)
             self.ps.screenshot(dirname + f"/frame_{video_save_offset + i:03d}.png", True)
+        return video_save_offset + frames
+    
+    # returns file descriptor
+    def openVideo(self, filename):
+        return ps.open_video_file(filename, fps=30)
+
+    def closeVideo(self, fd):
+        ps.close_video_file(fd)
+        return
+    
+    def renderVideo(self, f, fd, frames, video_save_offset=0):
+        for i in range(frames):
+            f(i)
+            ps.write_video_frame(fd, transparent_bg=True)
+        # Close the video file
         return video_save_offset + frames
 
     def renderTheta(self, f, dirname, rotations_per_second, r, thetas, phi, look_at_origin=[0, 0, 0], video_save_offset=0):

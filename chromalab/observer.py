@@ -2,6 +2,7 @@ from importlib import resources
 from itertools import combinations
 from typing import List, Union, Optional
 from scipy.spatial import ConvexHull
+from colour import XYZ_to_RGB, wavelength_to_XYZ, MSDS_CMFS
 
 import numpy as np
 import numpy.typing as npt
@@ -283,6 +284,13 @@ class Cone(Spectra):
         # 545 per nathan & merbs 92
         return Cone.cone(545, template=template, od=0.35, wavelengths=wavelengths)
     
+    @staticmethod
+    def old_q_cone(wavelengths=None):
+        with resources.path("chromalab.cones.old", "tetrachromat_cones.npy") as data_path:
+            A = np.load(data_path)
+        path_wavelengths = np.arange(390, 831, 1)
+        arr = np.stack([path_wavelengths, A[3, :]])
+        return Cone(arr.T).interpolate_values(wavelengths)
 
 
 def get_m_transitions(m, wavelengths, both_types=True):
@@ -317,7 +325,6 @@ class Observer:
 
         self.verbose = verbose
 
-
     @staticmethod
     def dichromat(wavelengths=None, illuminant=None):
         s_cone = Cone.s_cone(wavelengths)
@@ -340,6 +347,16 @@ class Observer:
         s_cone = Cone.s_cone(wavelengths) ##Cone.s_cone(wavelengths=wavelengths)
         return Observer([s_cone, m_cone, q_cone, l_cone], illuminant=illuminant, verbose=verbose)
     
+    @staticmethod
+    def old_tetrachromat(wavelengths=None, illuminant=None, verbose=False):
+        # This is a "maximally well spaced" tetrachromat
+        l_cone = Cone.l_cone(wavelengths) # Cone.cone(555, wavelengths=wavelengths, template="neitz", od=0.35)
+        q_cone = Cone.old_q_cone(wavelengths=wavelengths)
+        m_cone = Cone.m_cone(wavelengths) ##Cone.cone(530, wavelengths=wavelengths, template="neitz", od=0.35)
+        s_cone = Cone.s_cone(wavelengths) ##Cone.s_cone(wavelengths=wavelengths)
+        return Observer([s_cone, m_cone, q_cone, l_cone], illuminant=illuminant, verbose=verbose)
+    
+
     @staticmethod
     def protanope(wavelengths=None, illuminant=None):
         m_cone = Cone.m_cone(wavelengths)
@@ -396,7 +413,7 @@ class Observer:
         """
         sensor_matrix = self.get_sensor_matrix(wavelengths)
         whitepoint = np.matmul(self.sensor_matrix, self.illuminant.data)
-        return (sensor_matrix.T / whitepoint).T
+        return ((sensor_matrix * self.illuminant.data).T / whitepoint).T
 
     def observe(self, data: Union[npt.NDArray, Spectra]):
         """
@@ -411,6 +428,17 @@ class Observer:
         whitepoint = np.matmul(self.sensor_matrix, self.illuminant.data)
 
         return np.divide(observed_color, whitepoint)
+    
+    def observe_normalized(self, data: Union[npt.NDArray, Spectra]):
+        """
+        Either pass in a Spectra of light to observe or data that agrees with self.wavelengths.
+        """
+        if isinstance(data, Spectra):
+            data = data.interpolate_values(self.wavelengths).data
+        else:
+            assert data.size == self.wavelengths.size, f"Data shape {data.shape} must match wavelengths shape {self.wavelengths.shape}"
+            
+        return np.matmul(self.normalized_sensor_matrix, data)
 
     def dist(self, color1: Union[npt.NDArray, Spectra], color2: Union[npt.NDArray, Spectra]):
         return np.linalg.norm(self.observe(color1) - self.observe(color2))
@@ -481,6 +509,9 @@ class Observer:
         cuts, start = self.getFacetIdxFromIdx(index)
         return getReflectance(cuts, start, self.get_sensor_matrix(), self.dimension)
 
+def getsRGBfromWavelength(wavelength):
+    cmfs = MSDS_CMFS["CIE 1931 2 Degree Standard Observer"]
+    return XYZ_to_RGB(wavelength_to_XYZ(wavelength), "sRGB")
 
 def gaussian(x, A, mu, sigma):
     return A * np.exp(-(x - mu) ** 2 / (2 * sigma ** 2))

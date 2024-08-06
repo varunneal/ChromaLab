@@ -14,6 +14,12 @@ class Animation:
     def SetEnabledFn(self):
         return lambda list_true: [getattr(self.viz.ps, f'get_{type_name}')(item).set_enabled(enabled) for item, type_name, enabled in zip(list(self.dict.keys()), list(self.dict.values()), list_true)]
 
+    def set_enabled(self, name, toggle):
+        return getattr(self.viz.ps, f'get_{self.dict[name]}')(name).set_enabled(toggle)
+    
+    def set_transparency(self, name, value):
+        return getattr(self.viz.ps, f'get_{self.dict[name]}')(name).set_transparency(value)
+
     def ResetTransparencies(self):
         [getattr(self.viz.ps, f'get_{type_name}')(item).set_transparency(1) for item, type_name in zip(list(self.dict.keys()), list(self.dict.values()))]
 
