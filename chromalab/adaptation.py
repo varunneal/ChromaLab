@@ -3,11 +3,13 @@ import numpy as np
 import polyscope as ps  # https://polyscope.run/py/
 import random
 
+z_offset = -0.2
+
 def draw_circle_helper(center_x, center_y, radius, color, id):
     # Generate mesh geometry
     n_faces = 100
     verts, faces = [], []
-    z = id * -0.1   # Small offset to prevent shapes from clipping into each other
+    z = id * z_offset  # Small offset to prevent shapes from clipping into each other
 
     verts.append([center_x, center_y, z])
     thetas = np.linspace(0, 2 * np.pi, num=n_faces + 1)
@@ -38,7 +40,7 @@ def draw_circle_helper(center_x, center_y, radius, color, id):
     return circle
 
 def draw_square_helper(center_x, center_y, side, color, id):
-    z = id * -0.1
+    z = id * z_offset
     half = side / 2
 
     # Generate mesh geometry
