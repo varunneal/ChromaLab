@@ -70,7 +70,7 @@ def draw_square_helper(center_x, center_y, side, color, id):
 
 
 def dead_leaves(sigma, color_palette, filename, res=512, 
-                max_iters=50, shape_mode='mixed', tetra_save_mode='LMS_Q'):
+                max_iters=30, shape_mode='mixed', tetra_save_mode='LMS_Q'):
     """
     https://github.com/mbaradad/learning_with_noise/blob/main/generate_datasets/dead_leaves/generate_dataset.py
     
@@ -128,4 +128,3 @@ def dead_leaves(sigma, color_palette, filename, res=512,
         ps.screenshot(filename)
     elif n_ch == 4:
         ps.rasterize_tetra(filename, tetra_save_mode)
-        
