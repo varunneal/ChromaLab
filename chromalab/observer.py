@@ -356,6 +356,13 @@ class Observer:
         s_cone = Cone.s_cone(wavelengths) ##Cone.s_cone(wavelengths=wavelengths)
         return Observer([s_cone, m_cone, q_cone, l_cone], illuminant=illuminant, verbose=verbose)
     
+    @staticmethod
+    def human_w_pigeon_cone(wavelengths=None, illuminant=None, verbose=False):
+        l_cone = Cone.l_cone(wavelengths) # Cone.cone(555, wavelengths=wavelengths, template="neitz", od=0.35)
+        q_cone = Cone.cone(500, wavelengths=wavelengths, template="neitz", od=0.35) # TODO: change me to whatever atsu says
+        m_cone = Cone.m_cone(wavelengths) ##Cone.cone(530, wavelengths=wavelengths, template="neitz", od=0.35)
+        s_cone = Cone.s_cone(wavelengths) ##Cone.s_cone(wavelengths=wavelengths)
+        return Observer([s_cone, m_cone, q_cone, l_cone], illuminant=illuminant, verbose=verbose)
 
     @staticmethod
     def protanope(wavelengths=None, illuminant=None):
@@ -520,6 +527,30 @@ class Observer:
 def getsRGBfromWavelength(wavelength):
     cmfs = MSDS_CMFS["CIE 1931 2 Degree Standard Observer"]
     return XYZ_to_RGB(wavelength_to_XYZ(wavelength), "sRGB")
+
+def getSampledHyperCube(step_size, dimension):
+    """
+    Get a hypercube sample of the space
+    """
+    g = np.meshgrid(*[np.arange(0, 1+step_size, step_size) for _ in range(dimension)])
+    return np.array(list(zip(*(x.flat for x in g))))
+
+def getSampledHyperCubeSurface(step_size, dimension):
+    # get every cube face
+    g = np.meshgrid(*[np.arange(0, 1+step_size, step_size) for _ in range(dimension-1)])
+    grid = np.array(list(zip(*(x.flat for x in g))))
+    combs = list(combinations(range(dimension), dimension-1))
+    combs.reverse()
+    points = np.zeros((len(combs), 2, grid.shape[0], dimension))
+    for i in range(len(combs)):
+        for j in range(2):
+            points[i, j][:, combs[i]] = grid
+            if j == 0:
+                points[i, j][:, i] = np.ones(grid.shape[0])
+            else:
+                points[i, j][:, i] = np.zeros(grid.shape[0])
+    return points.reshape(-1, dimension)
+
 
 def gaussian(x, A, mu, sigma):
     return A * np.exp(-(x - mu) ** 2 / (2 * sigma ** 2))
