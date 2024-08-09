@@ -30,7 +30,6 @@ def draw_circle_helper(center_x, center_y, radius, color, id):
         circle.set_color(color)
     elif color.shape[0] == 4:
         values = np.tile(color, (circle.n_faces(), 1))
-        circle.set_material('flat_tetra')
         circle.add_tetracolor_quantity(f'tetracolor {str(id)}', values, defined_on='faces', enabled=True)
     else:
         raise Exception(f'{color.shape[0]}-channel color not supported')
@@ -62,7 +61,6 @@ def draw_square_helper(center_x, center_y, side, color, id):
         square.set_color(color)
     elif color.shape[0] == 4:
         values = np.tile(color, (square.n_faces(), 1))
-        square.set_material('flat_tetra')
         square.add_tetracolor_quantity(f'tetracolor {str(id)}', values, defined_on='faces', enabled=True)
     else:
         raise Exception(f'{color.shape[0]}-channel color not supported')
