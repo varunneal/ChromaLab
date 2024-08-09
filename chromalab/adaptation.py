@@ -1,4 +1,3 @@
-import matplotlib.colors as mcolors
 import numpy as np
 import polyscope as ps  # https://polyscope.run/py/
 import random
@@ -68,7 +67,6 @@ def draw_square_helper(center_x, center_y, side, color, id):
         raise Exception(f'{color.shape[0]}-channel color not supported')
     return square
 
-
 def dead_leaves(sigma, color_palette, res=512, max_iters=30, shape_mode='mixed'):
     """
     https://github.com/mbaradad/learning_with_noise/blob/main/generate_datasets/dead_leaves/generate_dataset.py
@@ -117,3 +115,43 @@ def dead_leaves(sigma, color_palette, res=512, max_iters=30, shape_mode='mixed')
             draw_square_helper(center_x, center_y, side, color, i)
         else:
             raise Exception(f'Got unsupported shape mode {shape}')
+
+def generate_color_wheel(colors):
+    """
+    Generates a new polyscope mesh for a color wheel, with equal-sized
+    pie sections that have their colors specified by the input.
+    colors -- should be a numpy array of shape (n_colors, n_channels); n_channels may be 3 or 4
+    """
+    # Generate mesh geometry
+    n_colors, n_channels = colors.shape
+    n_faces = 20 * n_colors
+    verts, faces = [], []
+
+    verts.append([0, 0])
+    thetas = np.linspace(0, 2 * np.pi, num=n_faces + 1)
+    for theta in thetas[:-1]:
+        x = np.cos(theta)
+        y = np.sin(theta)
+        verts.append([x, y])
+    verts = np.array(verts)
+
+    for i in range(n_faces - 1):
+        faces.append([0, i+1, i+2])
+    faces.append([0, n_faces, 1])
+    faces = np.array(faces)
+
+    wheel = ps.register_surface_mesh('wheel', verts, faces)
+
+    # Assign colors to mesh geometry
+    n_faces = wheel.n_faces()
+    values = np.repeat(colors, n_faces // n_colors, axis=0)
+    values = np.vstack([values, np.repeat(values[[-1]], n_faces % n_colors, axis=0)])
+    
+    if n_channels == 3:
+        wheel.set_material('flat')
+        wheel.add_color_quantity('colors', values, defined_on='faces', enabled=True)
+    elif n_channels == 4:
+        wheel.add_tetracolor_quantity(f'tetracolor {str(id)}', values, defined_on='faces', enabled=True)
+    else:
+        raise Exception(f'{n_channels}-channel color not supported')
+    return wheel
