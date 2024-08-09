@@ -69,8 +69,7 @@ def draw_square_helper(center_x, center_y, side, color, id):
     return square
 
 
-def dead_leaves(sigma, color_palette, filename, res=512, 
-                max_iters=30, shape_mode='mixed', tetra_save_mode='LMS_Q'):
+def dead_leaves(sigma, color_palette, res=512, max_iters=30, shape_mode='mixed'):
     """
     https://github.com/mbaradad/learning_with_noise/blob/main/generate_datasets/dead_leaves/generate_dataset.py
     
@@ -79,10 +78,6 @@ def dead_leaves(sigma, color_palette, filename, res=512,
     res             -- image resolution
     max_iters       -- number of shapes to draw
     shape_mode      -- whether to draw circles, squares, or a mixture
-    tetra_save_mode -- if rasterizing a tetracolor scene, mode to save the output
-        'LMS_Q' : saves first 3 channels in one RGB .png file, saves 4th channel in one grayscale .png file
-        'RG1G2B' : saves 4 color channels in one RGBA .png file
-        'four_gray' : saves each channel to a separate grayscale .png file
     """
     r_min = 0.05
     r_max = 0.4
@@ -122,9 +117,3 @@ def dead_leaves(sigma, color_palette, filename, res=512,
             draw_square_helper(center_x, center_y, side, color, i)
         else:
             raise Exception(f'Got unsupported shape mode {shape}')
-
-    n_ch = color_palette[0].shape[0]
-    if n_ch == 3:
-        ps.screenshot(filename)
-    elif n_ch == 4:
-        ps.rasterize_tetra(filename, tetra_save_mode)
