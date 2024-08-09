@@ -91,6 +91,7 @@ def dead_leaves(sigma, color_palette, res=512, max_iters=30, shape_mode='mixed')
     # Normalize so that cumulative sum is 1
     r_dist = r_dist / r_dist.max()
 
+    leaves = []
     available_shapes = ['circle', 'square']
     assert shape_mode in available_shapes or shape_mode == 'mixed'
     for i in range(max_iters):
@@ -101,7 +102,9 @@ def dead_leaves(sigma, color_palette, res=512, max_iters=30, shape_mode='mixed')
         
         # TODO: sample a color randomly from color_palette
         color_index = np.random.choice(color_palette.shape[0])
+        print(color_index)
         color = color_palette[color_index]
+        print(color)
 
         r_p = np.random.uniform(0, 1)
         r_i = np.argmin(np.abs(r_dist - r_p))
@@ -109,12 +112,13 @@ def dead_leaves(sigma, color_palette, res=512, max_iters=30, shape_mode='mixed')
         
         center_x, center_y = np.array(np.random.uniform(0, res, size=2), dtype='int32')
         if shape == 'circle':
-            draw_circle_helper(center_x, center_y, radius, color, i)
+            leaves.append(draw_circle_helper(center_x, center_y, radius, color, i))
         elif shape == 'square':
             side = radius * np.sqrt(2)
-            draw_square_helper(center_x, center_y, side, color, i)
+            leaves.append(draw_square_helper(center_x, center_y, side, color, i))
         else:
             raise Exception(f'Got unsupported shape mode {shape}')
+    return leaves
 
 def generate_color_wheel(colors):
     """
