@@ -58,17 +58,14 @@ class LEDSequence:
     def encode_intensities_to_seq(self, intensities: npt.ArrayLike):
         if type(intensities) != np.ndarray and len(intensities) == self.k:
             intensities = np.array([intensities])
-        elif type(intensities) != np.ndarray and intensities.shape[0] != self.k:
-            raise ValueError("Intensities Must be a List of Length k")
         elif type(intensities) == np.ndarray and intensities.shape[1] != self.k:
             raise ValueError("Intensities Need to Be Same Length as Primaries")
         elif not np.logical_and(np.all(intensities >=0), np.all(intensities <= 1)):
             raise ValueError("Intensities Need to be Between 0 and 1")
 
         num_colors = intensities.shape[0]
-        casted_intensities = np.array(intensities * 2 **self.b - 1, dtype=np.uint8)
+        casted_intensities = np.array(intensities * (2 **self.b - 1), dtype=np.uint8)
         casted_intensities = np.unpackbits(casted_intensities, axis=1).reshape(num_colors, self.k, 8)
-
         bin_seq = np.zeros((num_colors, 24), dtype=bool)
         for i in range(24):
             led_type = self.sequence[i].value
