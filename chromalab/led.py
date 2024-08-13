@@ -56,32 +56,51 @@ class LEDSequence:
 
     def get_sequence(self):
         return self.sequence
+
     
     def encode_intensities_to_seq(self, intensities: npt.ArrayLike):
-        if len(intensities) != self.k:
+        if type(intensities) != np.ndarray and len(intensities) == self.k:
+            intensities = np.array([intensities])
+        elif type(intensities) != np.ndarray and intensities.shape[0] != self.k:
+            raise ValueError("Intensities Must be a List of Length k")
+        elif type(intensities) == np.ndarray and intensities.shape[1] != self.k:
             raise ValueError("Intensities Need to Be Same Length as Primaries")
         elif not np.logical_and(np.all(intensities >=0), np.all(intensities <= 1)):
             raise ValueError("Intensities Need to be Between 0 and 1")
 
-        casted_intensities = np.array([intensities * 2 **self.b - 1], dtype=np.uint8)
-        casted_intensities = np.unpackbits(casted_intensities, axis=0).T
-        bin_seq = np.zeros(24, dtype=bool)
+        num_colors = intensities.shape[0]
+        casted_intensities = np.array(intensities * 2 **self.b - 1, dtype=np.uint8)
+        print(casted_intensities)
+        casted_intensities = np.unpackbits(casted_intensities, axis=1).reshape(num_colors, self.k, 8)
+        print(casted_intensities)
+
+        bin_seq = np.zeros((num_colors, 24), dtype=bool)
         for i in range(24):
             led_type = self.sequence[i].value
             led_idx = self.seq_idx[i]
-            bin_seq[i] = casted_intensities[led_type][(8 - self.b) + led_idx]
-        bin_seq = bin_seq.reshape(3, 8)
-        encoded_rgb = np.packbits(bin_seq, axis=1).T.squeeze()
+            bin_seq[:, i] = casted_intensities[:, led_type, (8 - self.b) + led_idx]
+        print(bin_seq)
+        bin_seq = bin_seq.reshape(num_colors, 3, 8)
+        encoded_rgb = np.packbits(bin_seq, axis=2).reshape(num_colors, 3)
         return encoded_rgb
     
     def decode_seq_to_intensities(self, encoded_rgb: npt.ArrayLike):
-        if len(encoded_rgb) != 3 or encoded_rgb.dtype != np.uint8:
-            raise ValueError("Encoded RGB Must be 3 Bytes")
-        casted_rgb = np.unpackbits(encoded_rgb)
-        intensities = np.zeros((self.k, 8), dtype=bool)
+        if type(encoded_rgb) != np.ndarray and len(encoded_rgb) == 3:
+            encoded_rgb = np.array([encoded_rgb], dtype=np.uint8)
+        elif type(encoded_rgb) != np.ndarray and encoded_rgb.shape[0] != 3:
+            raise ValueError("Encoded RGB must be 24 bits")
+        elif type(encoded_rgb) == np.ndarray and encoded_rgb.shape[1] != 3:
+            raise ValueError("Encoded RGB Must be 24 bits")
+        
+        if encoded_rgb.dtype != np.uint8:
+            raise ValueError("Encoded RGB Must be a uint8")
+        
+        num_colors = encoded_rgb.shape[0]
+        casted_rgb = np.unpackbits(encoded_rgb, axis=1)
+        intensities = np.zeros((num_colors, self.k, 8), dtype=bool)
         for i in range(24):
             led_type = self.sequence[i].value
             led_idx = self.seq_idx[i]
-            intensities[led_type][(8 - self.b) + led_idx] = casted_rgb[i]
-        intensities = np.packbits(intensities, axis=1).T
+            intensities[:, led_type, (8 - self.b) + led_idx] = casted_rgb[:, i]
+        intensities = np.packbits(intensities, axis=2).reshape(num_colors, self.k)
         return intensities/(2 **self.b - 1)
