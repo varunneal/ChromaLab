@@ -8,8 +8,6 @@ import numpy as np
 from .observer import Observer
 from .spectra import Spectra, Illuminant
 
-
-
 class LEDS(Enum):
     RED = 0 # 660nm
     GREEN = 1 # 550nm
@@ -56,7 +54,6 @@ class LEDSequence:
 
     def get_sequence(self):
         return self.sequence
-
     
     def encode_intensities_to_seq(self, intensities: npt.ArrayLike):
         if type(intensities) != np.ndarray and len(intensities) == self.k:
@@ -70,16 +67,13 @@ class LEDSequence:
 
         num_colors = intensities.shape[0]
         casted_intensities = np.array(intensities * 2 **self.b - 1, dtype=np.uint8)
-        print(casted_intensities)
         casted_intensities = np.unpackbits(casted_intensities, axis=1).reshape(num_colors, self.k, 8)
-        print(casted_intensities)
 
         bin_seq = np.zeros((num_colors, 24), dtype=bool)
         for i in range(24):
             led_type = self.sequence[i].value
             led_idx = self.seq_idx[i]
             bin_seq[:, i] = casted_intensities[:, led_type, (8 - self.b) + led_idx]
-        print(bin_seq)
         bin_seq = bin_seq.reshape(num_colors, 3, 8)
         encoded_rgb = np.packbits(bin_seq, axis=2).reshape(num_colors, 3)
         return encoded_rgb
