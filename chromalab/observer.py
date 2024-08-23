@@ -347,6 +347,14 @@ class Observer:
         s_cone = Cone.s_cone(wavelengths) ##Cone.s_cone(wavelengths=wavelengths)
         return Observer([s_cone, m_cone, q_cone, l_cone], illuminant=illuminant, verbose=verbose)
     
+    def neitz_tetrachromat(wavelengths=None, illuminant=None, verbose=False):
+        # This is a "maximally well spaced" tetrachromat
+        l_cone = Cone.cone(555, wavelengths=wavelengths, template="neitz", od=0.35)
+        q_cone = Cone.cone(545, wavelengths=wavelengths, template="neitz", od=0.35)
+        m_cone = Cone.cone(530, wavelengths=wavelengths, template="neitz", od=0.35)
+        s_cone = Cone.s_cone(wavelengths=wavelengths)
+        return Observer([s_cone, m_cone, q_cone, l_cone], illuminant=illuminant, verbose=verbose)
+    
     @staticmethod
     def old_tetrachromat(wavelengths=None, illuminant=None, verbose=False):
         # This is a "maximally well spaced" tetrachromat
@@ -399,6 +407,9 @@ class Observer:
         sensor_matrix = self.get_sensor_matrix(wavelengths)
 
         return np.matmul(sensor_matrix, self.illuminant.data)
+
+    def get_wavelength_sensitivity(self, wavelengths):
+        return self.get_sensor_matrix(wavelengths)
 
     def get_sensor_matrix(self, wavelengths: Optional[npt.NDArray] = None):
         """
@@ -561,6 +572,12 @@ def transformToChromaticity(matrix) -> npt.NDArray:
     """
     HMatrix = getHeringMatrix(matrix.shape[1])
     return (HMatrix@matrix.T).T[:, 1:]
+
+def transformToDisplayChromaticity(matrix, T) -> npt.NDArray:
+    """
+    Transform Coordinates (dim x n_rows) into Display Chromaticity Coordinates (divide by Luminance)
+    """
+    return (T@(matrix / np.sum(matrix, axis = 0)))[1:]
 
 def getHeringMatrix(dim) -> npt.NDArray: # orthogonalize does not return the right matrix in python....
     """
