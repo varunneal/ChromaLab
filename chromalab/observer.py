@@ -354,6 +354,19 @@ class Observer:
         m_cone = Cone.cone(530, wavelengths=wavelengths, template="neitz", od=0.35)
         s_cone = Cone.s_cone(wavelengths=wavelengths)
         return Observer([s_cone, m_cone, q_cone, l_cone], illuminant=illuminant, verbose=verbose)
+
+    def gaussian_tetrachromat(wavelengths=None, illuminant=None, verbose=False):
+
+        def gaussian(wavelengths, peak):
+            x = wavelengths
+            y = np.exp(-0.5 * ((x - peak) / (0.1 * (wavelengths[-1] - wavelengths[0])))**2)
+            return y
+        l_cone = Cone(np.concatenate([wavelengths[:, np.newaxis], gaussian(wavelengths, 560)[:, np.newaxis]], axis=1))
+        q_cone = Cone(np.concatenate([wavelengths[:, np.newaxis], gaussian(wavelengths, 545)[:, np.newaxis]], axis=1))
+        m_cone = Cone(np.concatenate([wavelengths[:, np.newaxis], gaussian(wavelengths, 530)[:, np.newaxis]], axis=1))
+        s_cone = Cone(np.concatenate([wavelengths[:, np.newaxis], gaussian(wavelengths, 450)[:, np.newaxis]], axis=1))
+
+        return Observer([s_cone, m_cone, q_cone, l_cone], illuminant=illuminant, verbose=verbose)
     
     @staticmethod
     def old_tetrachromat(wavelengths=None, illuminant=None, verbose=False):
@@ -470,19 +483,22 @@ class Observer:
         return spectras
 
     def get_optimal_rgbs(self) -> npt.NDArray:
+        if hasattr(self, 'rgbs'):
+            return self.rgbs
         rgbs = []
         for cuts, start in tqdm(self.facet_ids):
             ref = getReflectance(cuts, start, self.normalized_sensor_matrix, self.dimension)
             ref = np.concatenate([self.wavelengths[:, np.newaxis], ref[:, np.newaxis]], axis=1)
             rgbs+= [Spectra(ref).to_rgb(illuminant=self.illuminant)]
-        return np.array(rgbs)
+        self.rgbs = np.array(self.get_optimal_rgbs()).reshape(-1, 3)
+        return self.rgbs
 
     def __find_optimal_colors(self) -> Union[npt.NDArray, npt.NDArray]:
         facet_ids, facet_sums = getZonotopePoints(self.normalized_sensor_matrix, self.dimension, self.verbose)
         tmp = [[[x, 1], [x, 0]] for x in facet_ids]
         self.facet_ids = [y for x in tmp for y in x]
         self.point_cloud = np.array(list(facet_sums.values())).reshape(-1, self.dimension)
-        self.rgbs = self.get_optimal_rgbs().reshape(-1, 3)
+        self.get_optimal_rgbs()
         
     def get_enumeration_of_solid(self, step_size): # TODO: In the works
         facet_ids, facet_sums = getZonotopePoints(self.normalized_sensor_matrix, self.dimension, self.verbose)
@@ -508,6 +524,11 @@ class Observer:
         if not hasattr(self, 'point_cloud'):
             self.__find_optimal_colors()
         return self.point_cloud, self.rgbs
+    
+    def get_optimal_point_cloud(self) -> npt.NDArray:
+        if not hasattr(self, 'point_cloud'):
+            self.__find_optimal_colors()
+        return self.point_cloud
 
     def get_full_colors(self) -> Union[npt.NDArray, npt.NDArray]:
         if not hasattr(self, 'point_cloud'):
@@ -534,6 +555,14 @@ class Observer:
     def get_trans_ref_from_idx(self, index:int) -> npt.NDArray:
         cuts, start = self.getFacetIdxFromIdx(index)
         return getReflectance(cuts, start, self.get_sensor_matrix(), self.dimension)
+    
+    def checkOptimalCondition(self):
+        list_combos = list(combinations(range(self.sensor_matrix.shape[1]), self.dimension-1))
+        for combination in list_combos:
+            subset = self.sensor_matrix[:, combination]
+            if np.linalg.matrix_rank(subset.T) < self.dimension-1:
+                return False
+        return True
 
 def getsRGBfromWavelength(wavelength):
     cmfs = MSDS_CMFS["CIE 1931 2 Degree Standard Observer"]
@@ -573,11 +602,11 @@ def transformToChromaticity(matrix) -> npt.NDArray:
     HMatrix = getHeringMatrix(matrix.shape[1])
     return (HMatrix@matrix.T).T[:, 1:]
 
-def transformToDisplayChromaticity(matrix, T) -> npt.NDArray:
+def transformToDisplayChromaticity(matrix, T, idxs=None) -> npt.NDArray:
     """
     Transform Coordinates (dim x n_rows) into Display Chromaticity Coordinates (divide by Luminance)
     """
-    return (T@(matrix / np.sum(matrix, axis = 0)))[1:]
+    return (T@(matrix / np.sum(matrix, axis = 0)))[idxs]
 
 def getHeringMatrix(dim) -> npt.NDArray: # orthogonalize does not return the right matrix in python....
     """

@@ -16,6 +16,8 @@ class LEDS(Enum):
     CYAN = 4 # 510nm
     SBLUE = 5 # 410nm
 
+LED_WAVELENGTHS = [660, 550, 451, 590, 510, 410]
+
 class LEDSequence:
     HDMI_BANDWIDTH = 24
 
@@ -42,11 +44,16 @@ class LEDSequence:
             self.seq_idx.append(curr_leds[led_idx])
             curr_leds[led_idx]+=1
         self.sequence = sequence
-        self.observer = observer
+        if observer is not None:
+            self.observer = observer
+            if len(leds) != observer.dimension:
+                raise NotImplementedError("Observer Dimensionality Must Match LED Count")
+            self.primary_intensities = observer.get_wavelength_sensitivity(np.array([LED_WAVELENGTHS[v.value] for v in leds]))
 
     @staticmethod
-    def TetrachromaticDisplay():
-        return LEDSequence([LEDS.RED, LEDS.GREEN, LEDS.BLUE, LEDS.YELLOW], [LEDS.RED, LEDS.GREEN, LEDS.BLUE, LEDS.YELLOW] * 6)
+    def TetrachromaticDisplay(observer=None):
+        seq = [LEDS.RED, LEDS.GREEN, LEDS.BLUE, LEDS.YELLOW]
+        return LEDSequence(seq, seq * 6, observer)
 
     # getters
     def get_primaries(self):
@@ -54,6 +61,9 @@ class LEDSequence:
 
     def get_sequence(self):
         return self.sequence
+    
+    def activations_to_intensities(self, activations: npt.ArrayLike):
+        return np.matmul(np.linalg.inv(self.primary_intensities), activations)
     
     def encode_intensities_to_seq(self, intensities: npt.ArrayLike):
         if type(intensities) != np.ndarray and len(intensities) == self.k:
@@ -64,7 +74,7 @@ class LEDSequence:
             raise ValueError("Intensities Need to be Between 0 and 1")
 
         num_colors = intensities.shape[0]
-        casted_intensities = np.array(intensities * (2 **self.b - 1), dtype=np.uint8)
+        casted_intensities = np.array(intensities * (2 **self.b - 1), dtype=np.uint8) # discretization here, ask will or ren what's acceptable?
         casted_intensities = np.unpackbits(casted_intensities, axis=1).reshape(num_colors, self.k, 8)
         bin_seq = np.zeros((num_colors, 24), dtype=bool)
         for i in range(24):

@@ -4,6 +4,7 @@ from tqdm import tqdm
 
 import numpy as np
 import glm
+import matplotlib.pyplot as plt
 
 from .observer import Observer, getHeringMatrix
 from .spectra import Spectra, convert_refs_to_spectras, Illuminant
@@ -31,7 +32,7 @@ def getCylinderTransform(endpoints):
 
 class MaxBasis:
     dim4SampleConst = 10
-    dim3SampleConst = 5
+    dim3SampleConst = 2
     
     def __init__(self, observer, verbose=False) -> None:
         self.verbose = verbose
@@ -63,14 +64,14 @@ class MaxBasis:
             refs = np.array([Spectra.from_transitions( x, 1 if i == 0 else 0, self.wavelengths).data for i, x in enumerate(transitions)])[::-1]
         else:
             refs = np.array([Spectra.from_transitions( x, 1 if i == 0 else 0, self.wavelengths).data for i, x in enumerate(transitions)])
-
+        self.refs = refs
         self.cone_to_maxbasis = np.linalg.inv(np.dot(self.matrix, refs.T))
-        self.maximal_matrix = np.dot(np.linalg.inv(np.dot(self.matrix, refs.T)), self.matrix)
+        self.maximal_matrix = np.dot(self.cone_to_maxbasis, self.matrix)
 
         self.maximal_sensors = []
         for i in range(self.dimension):
             spectra = np.concatenate([self.observer.wavelengths[:, np.newaxis], self.maximal_matrix[i][:, np.newaxis]], axis=1)
-            self.maximal_sensors +=[Spectra(spectra, self.observer.wavelengths)]
+            self.maximal_sensors +=[Spectra(spectra, self.observer.wavelengths, normalized=False)] # false to stop clipping from 0 to 1
         self.maximal_observer = Observer(self.maximal_sensors, verbose=self.verbose) # erased self.observer.illuminant.
         return self.maximal_sensors, self.maximal_observer
 
@@ -165,7 +166,7 @@ class MaxBasis:
             range = [[x - rangbd, x + rangbd] for x in cutpoints[:self.dimension-1]]
 
         self.__findMaxCutpoints(range)
-        self.__findMaximalCMF(isReverse=True)
+        self.__findMaximalCMF(isReverse=False)
 
     def get_max_basis_observer(self):
         return self.maximal_observer

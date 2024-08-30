@@ -133,9 +133,12 @@ def bucket_points(points: npt.NDArray , axis=2):
     N, d = points.shape
 
     prec = 0.005
+    # prec = 0.0000005
     # 8 is large enough for prec = 0.005:
     # 8 > log_2 (1 / 0.005)
+    # 22 > log_2(1/0.0000005)
     weights = (2 ** (8 * np.arange(0, d)))
+    # weights = (2 ** (22 * np.arange(0, d)))
     weights[axis] = 0
 
     values = points // prec
@@ -168,6 +171,15 @@ def sort_buckets(buckets, axis=2) -> List:
 
     return sorted(dist_buckets, reverse=True)
 
+def get_metamer_buckets(points, axis=2):
+    sorted_points = []
+
+    buckets = sort_buckets(bucket_points(points, axis=axis), axis=axis)
+    for dst, (i, j) in buckets:
+        sorted_points.append((dst, (tuple(points[i]), tuple(points[j]))))
+
+    sorted_points.sort(reverse=True)
+    return sorted_points
 
 def k_s_from_data(data: npt.NDArray):
     array = np.clip(data, 1e-4, 1)

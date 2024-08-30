@@ -87,7 +87,7 @@ def plotAxisAlignedProjections(points, axis_labels=['$B$', '$G$', '$R$']):
 
 class ChromaticityDiagramType(Enum):
     XY=0
-    LaserPoint=1
+    ConeBasis=1
     HeringMaxBasisDisplay=2
 
 class DisplayGamut(ABC):
@@ -95,19 +95,19 @@ class DisplayGamut(ABC):
     dim4SampleConst = 10
     dim3SampleConst = 5
         
-    def __init__(self, observer, chromaticity_diagram_type=ChromaticityDiagramType.LaserPoint, transformMatrix=None, verbose=False) -> None:
+    def __init__(self, observer, chromaticity_diagram_type=ChromaticityDiagramType.ConeBasis, transformMatrix=None, projection_idxs=None , verbose=False) -> None:
         self.verbose = verbose
         self.observer = observer
         self.chrom_diag_type = chromaticity_diagram_type
         self.wavelengths = observer.wavelengths
         self.matrix = observer.get_normalized_sensor_matrix()
         self.dimension = observer.dimension
-        self.chromaticity_transform = self.get_chromaticity_conversion_function(transformMatrix)
+        self.projection_idxs = list(range(1, self.dimension)) if projection_idxs is None else projection_idxs
+        self.chromaticity_transform = self.get_chromaticity_conversion_function(transformMatrix, idxs=self.projection_idxs)
         self.chromaticity_mat = self.chromaticity_transform(self.matrix)
-        self.wavelength_primaries = None
-        self.primary_intensities = None
+        self.chrom_intensities = None
 
-    def get_chromaticity_conversion_function(self, transformMatrix=None):
+    def get_chromaticity_conversion_function(self, transformMatrix=None, idxs=None):
         T = np.eye(self.observer.dimension)
         match self.chrom_diag_type: 
             case ChromaticityDiagramType.XY:
@@ -115,8 +115,8 @@ class DisplayGamut(ABC):
                     raise ValueError("Chromaticity Diagram Type XY is only supported for 3 dimensions")
                 raise NotImplementedError("Chromaticity Diagram Type XY is not implemented")
             
-            case ChromaticityDiagramType.LaserPoint:
-                return lambda pts : transformToDisplayChromaticity(pts, T)
+            case ChromaticityDiagramType.ConeBasis:
+                return lambda pts : transformToDisplayChromaticity(pts, T, idxs=idxs)
 
             case ChromaticityDiagramType.HeringMaxBasisDisplay:
                 if transformMatrix is not None:
@@ -124,7 +124,7 @@ class DisplayGamut(ABC):
                     def conv_chromaticity(pts):
                         vecs = (transformMatrix@pts)
                         T = getHeringMatrix(dim)
-                        return transformToDisplayChromaticity(vecs, T)
+                        return transformToDisplayChromaticity(vecs, T, idxs=idxs)
                     return conv_chromaticity
                 else:
                     raise ValueError("Transform Matrix is not set with ChromaticityDiagramType.HeringMaxBasis")            
@@ -132,15 +132,23 @@ class DisplayGamut(ABC):
                 raise ValueError("Invalid Chromaticity Diagram Type")
 
     def convertActivationsToIntensities(self, activations):
-        return np.matmul(np.linalg.inv(self.primary_intensities), activations)
+        return np.matmul(np.linalg.inv(self.primary_intensities.T), activations).T
+    
+    def getMaxDisplayBasis(self):
+        mat = np.linalg.inv(self.primary_intensities)
+        # max_matrix = np.dot(self.cone_to_maxbasis, mat)
+        return mat
+
+    def setPrimariesWithSpectra(self, spectras):
+        self.primary_intensities = np.array([self.observer.observe(s) for s in spectras])
+        self.chrom_intensities = self.chromaticity_transform(self.primary_intensities.T).T
+        self.primary_colors = np.clip(np.array([s.to_rgb() for s in spectras]), 0, 1)
     
     def setMonochromaticPrimaries(self, primaries):
-
-    
-    def setPrimaries(self, primaries):
-        # assert len(primaries) == self.dimension
-        assert primaries.shape[1] == (self.dimension-1)
-        self.primaries = primaries
+        idxs = np.searchsorted(self.wavelengths, primaries)
+        self.primary_intensities = np.array([self.matrix.T[i] for i in idxs])
+        self.chrom_intensities = self.chromaticity_transform(self.primary_intensities.T).T
+        self.primary_colors = np.clip(np.array([getsRGBfromWavelength(x) for x in primaries]), 0, 1)
 
     def computeSimplexVolume(self, wavelengths):
         idxs = np.searchsorted(self.wavelengths, wavelengths) # pick index wavelengths from list of wavelengths
@@ -155,8 +163,8 @@ class DisplayGamut(ABC):
         if primaries is not None:
             return self.computeSimplexVolume(primaries)
         else:
-            assert hasattr(self, 'primaries'), "Primaries attribute is not set"
-            return self.computeSimplexVolume(self.primaries)
+            assert hasattr(self, 'primary_intensities'), "Primaries attribute is not set"
+            return self.computeSimplexVolume(self.chrom_intensities)
     
     def computeMaxPrimariesInFull(self):
 
@@ -173,7 +181,7 @@ class DisplayGamut(ABC):
         max_primaries = list(data)[idx]
         print(f"Max Primaries -- {max_primaries}")
         print(f"Max Volume = {result[idx]}")
-        self.primaries = max_primaries
+        self.setMonochromaticPrimaries(np.array(max_primaries))
         return max_primaries
 
     @staticmethod
@@ -205,12 +213,12 @@ class DisplayGamut(ABC):
         print(f"Max Primaries -- {max_primaries}")
         print(f"Max Volume = {result[idx]}")
 
-        self.primaries = max_primaries
+        self.setMonochromaticPrimaries(np.array(max_primaries))
         return max_primaries
     
     def computeProjectedConvexHull(self):
         hull = ConvexHull(self.matrix.T)
-        points = transformToDisplayChromaticity(hull.points.T, self.T).T
+        points = self.chromaticity_transform(hull.points.T).T
         hull2 = ConvexHull(points)
         return points, hull2
     
@@ -218,20 +226,11 @@ class DisplayGamut(ABC):
     def computeBarycentricCoordinates(self, coordinates, p):
        raise NotImplementedError("Abstract Method")
         
-    def displayPrimariesInMaxSimplex(self, primaries=None):
-        # TODO: fix primaries attribute to separate between the actual chromaticity value, and the wavelength (cuz wavelength only works for monochromatic lights)
-        if primaries is None and not hasattr(self, 'primaries'):
-            primaries = self.computeMaxPrimariesInChrom()
-        else:
-            primaries = self.primaries if primaries is None else primaries
-        
+    def displayPrimariesInMaxSimplex(self):
         simplex_coords = self._genSimplex(1, self.dimension)
-        idxs = np.searchsorted(self.wavelengths, primaries)
-        chosen_primaries = np.array([self.chromaticity_mat[:, i] for i in idxs])
-
         coords = np.zeros((self.dimension, self.chromaticity_mat.shape[1]))
         for i in range(self.chromaticity_mat.shape[1]):
-            coords[:, i] = self.computeBarycentricCoordinates(chosen_primaries, self.chromaticity_mat[:, i])
+            coords[:, i] = self.computeBarycentricCoordinates(self.chrom_intensities, self.chromaticity_mat[:, i])
         
         barycentric_coords = (simplex_coords.T@coords)
         
@@ -243,6 +242,7 @@ class DisplayGamut(ABC):
         raise NotImplementedError("Method not implemented")
 
 class TetraDisplayGamut(DisplayGamut):
+    AXIS_LABELS = ['$S/A$', '$M/A$', '$Q/A$', '$L/A$']
     
     """
     loadTutenLabDisplay specify led_indices in array RGBOCV, and return the display object
@@ -254,13 +254,10 @@ class TetraDisplayGamut(DisplayGamut):
 
         wavelengths = led_spectrums[:, 0]
         led_spectrums = convert_refs_to_spectras(led_spectrums[:, np.array(led_indices) + 1].T, wavelengths)
-        lms_activations = [observer.observe(s) for s in led_spectrums]
+        # lms_activations = [observer.observe(s) for s in led_spectrums]
 
-        tet_disp = TetraDisplayGamut(observer, chromaticity_diagram_type=ChromaticityDiagramType.LaserPoint)
-        
-        pts_in_chrom = tet_disp.chromaticity_transform(lms_activations)
-        tet_disp.setPrimaries(pts_in_chrom.T)
-
+        tet_disp = TetraDisplayGamut(observer, chromaticity_diagram_type=ChromaticityDiagramType.ConeBasis)
+        tet_disp.setPrimariesWithSpectra(led_spectrums)
         return tet_disp
 
     def computeBarycentricCoordinates(self, coordinates, p):
@@ -286,18 +283,17 @@ class TetraDisplayGamut(DisplayGamut):
         v6 = 1 / np.dot(np.cross(vab, vac), vad)
         return np.array([va6*v6, vb6*v6, vc6*v6, vd6*v6])
 
-    def displayPrimariesInMaxSimplex(self, primaries=None):
-        simplex_coords, barycentric_coords = super().displayPrimariesInMaxSimplex(primaries)
+    def displayPrimariesInMaxSimplex(self):
+        simplex_coords, barycentric_coords = super().displayPrimariesInMaxSimplex()
 
-        color_patches = np.clip([getsRGBfromWavelength(x) for x in self.primaries], 0, 1)
         hull = ConvexHull(simplex_coords)
 
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
         ax.plot_trisurf(simplex_coords[:, 0], simplex_coords[:, 1], simplex_coords[:, 2], triangles=hull.simplices, color='gray', alpha=0.2)
-        ax.scatter(simplex_coords[:, 0], simplex_coords[:, 1], simplex_coords[:, 2], c=color_patches, s=100)
+        ax.scatter(simplex_coords[:, 0], simplex_coords[:, 1], simplex_coords[:, 2], c=self.primary_colors, s=100)
         ax.plot(barycentric_coords[0], barycentric_coords[1], barycentric_coords[2], c='b', alpha=0.5)
-        ax.set_box_aspect([1, 1, 1])
+        plt.gca().set_aspect('equal')
         plt.show()
         
         
@@ -305,46 +301,43 @@ class TetraDisplayGamut(DisplayGamut):
     def displayPrimariesInChromDiagram(self, primaries=None, title=None):
         fig = plt.figure(figsize=plt.figaspect(0.33))
 
-        max_primaries = self.primaries if primaries is None else primaries
-        color_patches = np.clip([getsRGBfromWavelength(x) for x in max_primaries], 0, 1)
-
         ax = fig.add_subplot(1, 3, 1)
-        ax.set_title("Monochromatic Wavelengths")
+        ax.set_title("Spectral Locus in Chromaticity")
         ax.set_xlim(self.wavelengths[0], self.wavelengths[-1])
         ax.set_xlabel('Wavelengths')
         ax.set_ylabel('Sensitivity')
         colors = ['b', 'g', 'r'] if self.dimension == 3 else ['b', 'g', 'y', 'r']
-        for i, x in enumerate(max_primaries):
-            ax.axvline(x, color=color_patches[i])
+        # for i, x in enumerate(max_primaries):
+        #     ax.axvline(x, color=self.primary_colors[i])
         
-        for j in range(self.observer.dimension):
-            ax.plot(self.wavelengths, self.observer.get_sensor_matrix()[j], c=colors[j], alpha=0.5)
+        # for j in range(self.observer.dimension):
+        #     ax.plot(self.wavelengths, self.observer.get_sensor_matrix()[j], c=colors[j], alpha=0.5)
+
+        for j in range(self.chromaticity_mat.shape[0]):
+            ax.plot(self.wavelengths, self.chromaticity_mat[j], c=self.primary_colors[j], alpha=0.5)
 
         matrix = self.chromaticity_mat if primaries is None else primaries
         ax1 = fig.add_subplot(1, 3, 2, projection='3d')
         if title is not None: 
             ax1.set_title(title)
         ax1.plot(matrix[0], matrix[1], matrix[2])
-        ax1.set_xlabel('$M/A$')
-        ax1.set_ylabel('$Q/A$')
-        ax1.set_zlabel('$L/A$')
+        ax1.set_xlabel(TetraDisplayGamut.AXIS_LABELS[self.projection_idxs[0]])
+        ax1.set_ylabel(TetraDisplayGamut.AXIS_LABELS[self.projection_idxs[1]])
+        ax1.set_zlabel(TetraDisplayGamut.AXIS_LABELS[self.projection_idxs[2]])
 
-        idxs = np.searchsorted(self.wavelengths, max_primaries)
-        
-        chosen_primaries = np.array([matrix[:, i] for i in idxs])
-        ax1.scatter(chosen_primaries[:, 0], chosen_primaries[:, 1], chosen_primaries[:, 2], c=color_patches, s=100)
+        ax1.scatter(self.chrom_intensities[:, 0], self.chrom_intensities[:, 1], self.chrom_intensities[:, 2], c=self.primary_colors, s=100)
 
         # Compute & plot the convex hull of the matrix
-        hull1 = ConvexHull(chosen_primaries)
-        ax1.plot_trisurf(chosen_primaries[:, 0], chosen_primaries[:, 1], chosen_primaries[:, 2], triangles=hull1.simplices, color='gray', alpha=0.2)
+        hull1 = ConvexHull(self.chrom_intensities)
+        ax1.plot_trisurf(self.chrom_intensities[:, 0], self.chrom_intensities[:, 1], self.chrom_intensities[:, 2], triangles=hull1.simplices, color='gray', alpha=0.2)
 
         # Ideal Hull
         ax2 = fig.add_subplot(1, 3, 3, projection='3d')
         ax2.set_title(f"Spectral Display")
         ax2.plot(matrix[0], matrix[1], matrix[2])
-        ax2.set_xlabel('$M/A$')
-        ax2.set_ylabel('$Q/A$')
-        ax2.set_zlabel('$L/A$')
+        ax1.set_xlabel(TetraDisplayGamut.AXIS_LABELS[self.projection_idxs[0]])
+        ax1.set_ylabel(TetraDisplayGamut.AXIS_LABELS[self.projection_idxs[1]])
+        ax1.set_zlabel(TetraDisplayGamut.AXIS_LABELS[self.projection_idxs[2]])
 
         _, hull2 = self.computeProjectedConvexHull()
         ax2.plot_trisurf(hull2.points[:, 0], hull2.points[:, 1], hull2.points[:, 2], triangles=hull2.simplices, color='gray', alpha=0.2)
@@ -355,8 +348,9 @@ class TetraDisplayGamut(DisplayGamut):
 
 
 class TriDisplayGamut(DisplayGamut):
+    AXIS_LABELS = ['$S/A$', '$M/A$', '$L/A$']
 
-    def computeBarycentricCoordinates(coordinates, p):
+    def computeBarycentricCoordinates(self, coordinates, p):
         v0 = coordinates[1] - coordinates[0]
         v1 = coordinates[2] - coordinates[0]
         v2 = p - coordinates[0]
@@ -411,15 +405,13 @@ class TriDisplayGamut(DisplayGamut):
         ax.scatter(pts[:, 0], pts[:, 1], c='blue', s=100)
         self.__plot_2d_hull(pts, hull1, ax, 'k', 0.2)
 
-    def displayPrimariesInMaxSimplex(self, primaries=None):
-        simplex_coords, barycentric_coords = super().displayPrimariesInMaxSimplex(primaries)
-
-        color_patches = np.clip([getsRGBfromWavelength(x) for x in self.primaries], 0, 1)
+    def displayPrimariesInMaxSimplex(self):
+        simplex_coords, barycentric_coords = super().displayPrimariesInMaxSimplex()
         hull = ConvexHull(simplex_coords)
 
         fig, ax = plt.subplots()
         self.__plot_2d_hull(simplex_coords, hull, ax, 'k', 0.2)
-        ax.scatter(simplex_coords[:, 0], simplex_coords[:, 1], c=color_patches, s=100)
+        ax.scatter(simplex_coords[:, 0], simplex_coords[:, 1], c=self.primary_colors, s=100)
         ax.plot(barycentric_coords[0], barycentric_coords[1], c='b', alpha=0.5)
         ax.set_aspect('equal')
         plt.show()
@@ -427,35 +419,35 @@ class TriDisplayGamut(DisplayGamut):
     def displayPrimariesInChromDiagram(self, primaries=None, title=None):
         fig = plt.figure(figsize=plt.figaspect(0.33))
 
-        max_primaries = self.primaries if primaries is None else primaries
-        color_patches = np.clip([getsRGBfromWavelength(x) for x in max_primaries], 0, 1)
-
+        max_primaries = self.chrom_intensities if primaries is None else primaries
         ax = fig.add_subplot(1, 3, 1)
-        ax.set_title("Monochromatic Wavelengths")
+        ax.set_title("Spectral Locus in Chromaticity")
         ax.set_xlim(self.wavelengths[0], self.wavelengths[-1])
         ax.set_xlabel('Wavelengths')
         ax.set_ylabel('Sensitivity')
 
-        for i, x in enumerate(max_primaries):
-            ax.axvline(x, color=np.clip(color_patches[i], 0, 1))
+        # for i, x in enumerate(max_primaries):
+        #     ax.axvline(x, color=self.primary_colors[i])
+
+        for j in range(self.chromaticity_mat.shape[0]):
+            ax.plot(self.wavelengths, self.chromaticity_mat[j], c=self.primary_colors[j], alpha=0.5)
         
-        colors = ['b', 'g', 'r'] if self.dimension == 3 else ['b', 'g', 'y', 'r']
-        for j in range(self.observer.dimension):
-            ax.plot(self.wavelengths, self.observer.get_sensor_matrix()[j], c=colors[j], alpha=0.5)
+        # colors = ['b', 'g', 'r'] if self.dimension == 3 else ['b', 'g', 'y', 'r']
+        # for j in range(self.observer.dimension):
+        #     ax.plot(self.wavelengths, self.observer.get_sensor_matrix()[j], c=colors[j], alpha=0.5)
 
         matrix = self.chromaticity_mat if primaries is None else primaries
         ax = fig.add_subplot(1, 3, 2)
         if title is not None:
             ax.set_title(title)
         ax.plot(matrix[0], matrix[1])
-        idxs = np.searchsorted(self.wavelengths, max_primaries)
-        points = self.chromaticity_mat[:, idxs].T
-        hull1 = ConvexHull(points)
+        
+        hull1 = ConvexHull(self.chrom_intensities)
         # convex_hull_plot_2d(hull, ax)
-        self.__plot_2d_hull(points, hull1, ax, 'k', 0.2)
-        ax.scatter(points[:, 0], points[:, 1], c=color_patches, s=100)
-        ax.set_xlabel('$M/A$')
-        ax.set_ylabel('$L/A$')
+        self.__plot_2d_hull(self.chrom_intensities, hull1, ax, 'k', 0.2)
+        ax.scatter(self.chrom_intensities[:, 0], self.chrom_intensities[:, 1], c=self.primary_colors, s=100)
+        ax.set_xlabel(TriDisplayGamut.AXIS_LABELS[self.projection_idxs[0]])
+        ax.set_ylabel(TriDisplayGamut.AXIS_LABELS[self.projection_idxs[1]])
 
         # Ideal Hull 
         ax = fig.add_subplot(1, 3, 3)
@@ -465,8 +457,8 @@ class TriDisplayGamut(DisplayGamut):
         print(points.shape)
         self.__plot_2d_hull(points, hull2, ax, 'k', 0.2)
         ax.scatter(points[:, 0], points[:, 1], c='orange', s=100)
-        ax.set_xlabel('$M/A$')
-        ax.set_ylabel('$L/A$')
+        ax.set_xlabel(TriDisplayGamut.AXIS_LABELS[self.projection_idxs[0]])
+        ax.set_ylabel(TriDisplayGamut.AXIS_LABELS[self.projection_idxs[1]])
         # self._plot_sRGB_Gamut(ax)
 
         print(f"Volume Ratio Between n primaries / ideal = {hull1.volume/hull2.volume}")
