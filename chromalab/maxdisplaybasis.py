@@ -1,6 +1,7 @@
 from itertools import combinations
 from importlib import resources
 from functools import reduce
+from typing import Literal
 
 from abc import ABC, abstractmethod
 from enum import Enum
@@ -10,6 +11,7 @@ import matplotlib.gridspec as gridspec
 from colour import xyY_to_XYZ
 import pandas as pd
 
+from .zonotope import getZonotopeForIntersection
 from .spectra import Spectra, convert_refs_to_spectras
 from .observer import getsRGBfromWavelength, transformToDisplayChromaticity, transformToChromaticity, getHeringMatrix
 from scipy.spatial import ConvexHull, convex_hull_plot_2d
@@ -84,6 +86,7 @@ def plotAxisAlignedProjections(points, axis_labels=['$B$', '$G$', '$R$']):
     plt.tight_layout()
     plt.show()
 
+_IN_GAMUT_TYPES = Literal["none", "clip_to_zero", "constant_ratio", "constant_luminance"]
 
 class ChromaticityDiagramType(Enum):
     XY=0
@@ -131,8 +134,21 @@ class DisplayGamut(ABC):
             case _:
                 raise ValueError("Invalid Chromaticity Diagram Type")
 
-    def convertActivationsToIntensities(self, activations):
-        return np.matmul(np.linalg.inv(self.primary_intensities.T), activations).T
+    def convertActivationsToIntensities(self, activations, type_: _IN_GAMUT_TYPES = "none"):
+        white_point = self.observer.get_whitepoint() # d tuple
+        points = np.matmul(self.M_ConeToPrimaries, activations).T
+        
+        if type_ == "none":
+            return points
+        elif type_ == "clip_to_zero":
+            return np.clip(points, 0) # get rid of all negative values
+        elif type_ == "constant_ratio":
+            # display gamut is a convex hull of the primaries
+            facets = getZonotopeForIntersection(self.primary_intensities, self.dimension)
+            return getResizedGamut(points, facets) # TODO: to redo to make the white point a certain direction? 
+        elif type_ == "constant_luminance":
+            facets = getZonotopeForIntersection(self.primary_intensities, self.dimension)
+            return getLumConstPoints(points, facets)  # TODO: to redo to make the white point a certain direction? 
     
     def getMaxDisplayBasis(self):
         mat = np.linalg.inv(self.primary_intensities)
@@ -143,12 +159,16 @@ class DisplayGamut(ABC):
         self.primary_intensities = np.array([self.observer.observe(s) for s in spectras])
         self.chrom_intensities = self.chromaticity_transform(self.primary_intensities.T).T
         self.primary_colors = np.clip(np.array([s.to_rgb() for s in spectras]), 0, 1)
+
+        self.M_ConeToPrimaries = np.linalg.inv(self.primary_intensities.T)
     
     def setMonochromaticPrimaries(self, primaries):
         idxs = np.searchsorted(self.wavelengths, primaries)
         self.primary_intensities = np.array([self.matrix.T[i] for i in idxs])
         self.chrom_intensities = self.chromaticity_transform(self.primary_intensities.T).T
         self.primary_colors = np.clip(np.array([getsRGBfromWavelength(x) for x in primaries]), 0, 1)
+
+        self.M_ConeToPrimaries = np.linalg.inv(self.primary_intensities.T)
 
     def computeSimplexVolume(self, wavelengths):
         idxs = np.searchsorted(self.wavelengths, wavelengths) # pick index wavelengths from list of wavelengths
@@ -464,3 +484,84 @@ class TriDisplayGamut(DisplayGamut):
         print(f"Volume Ratio Between n primaries / ideal = {hull1.volume/hull2.volume}")
         plt.tight_layout()
         plt.show()
+
+def computeParalleltopeCoords(ray_dir, points, ray_origin=None):
+    """
+    Compute the alpha, beta, and gamma that correspond to a point relative to a parallelotope 
+    defined by the points P0 (origin of parallelotope), P1 (dir 1), P2, and P3.
+
+    ray_dir is a d-dim vector. 
+    ray_origin is a d-dim point. 
+    points is a d x d matrix of points, where each row is a point in d-dim space 
+    """
+
+    if ray_origin is None:
+        ray_origin = np.zeros_like(ray_dir)
+    
+    dim = len(ray_dir)
+    # Compute the matrix M that has the points as columns
+    M = np.zeros((dim, dim))
+    M[:, 0] = -ray_dir
+    for i in range(1, dim):
+        M[:, i] = points[i] - points[0]
+
+    b = ray_origin - points[0]
+    if np.linalg.matrix_rank(M) < dim:
+        return None
+    vecs = np.linalg.solve(M, b)
+    return vecs
+
+def approx_lte(x, y):
+    return np.logical_or(x <= y, np.isclose(x, y))
+def approx_gte(x, y):
+    return np.logical_or(x >= y, np.isclose(x, y))
+
+def getResizedGamut(candidate_points, paralleletope_facets, ray_origin=None):
+    """
+    Return the t parameter of a ray direction such that it lies inside of the parallelotope defined by P0, P1, P2, and P3. 
+    """
+
+    if ray_origin is None:
+        ray_origin = np.zeros_like(candidate_points[0])
+
+    current_multiple = 1
+    for candidate_point in candidate_points:
+        t = np.linalg.norm(candidate_point)
+        ray_dir = candidate_point/t
+        for paralleletope_facet in paralleletope_facets:
+            vecs = computeParalleltopeCoords(ray_dir, paralleletope_facet, ray_origin)
+            # the intersection being less than t means that the point is outside the gamut
+            if vecs is not None and np.all(vecs[1:] >= 0) and np.all(vecs[1:] <= 1) and vecs[0] < t and vecs[0] > 0:
+                current_multiple = min(current_multiple, vecs[0]/t)
+    return current_multiple
+    
+def getLumConstPoints(candidate_points, paralleletope_facets):
+    """
+    Remap points to fit in gamut by projecting onto the luminance axis and then choosing the most saturated
+    candidate points --  Nxd array where N is the number of points and d is dimension
+    paralleletope_facets -- list of [o, v, w] vectors that define a sub-paralleletope of dimension d-1
+    """
+    lum_dir = np.ones(candidate_points.shape[1])
+
+    # check if the max point is larger than white, if so, we need to scale down the gamut
+    norms_on_lum = np.max(np.dot(candidate_points, lum_dir.T)/np.linalg.norm(lum_dir)**2)
+    if norms_on_lum > 1:
+        multiple = getResizedGamut(candidate_points, paralleletope_facets)
+        candidate_points = candidate_points * multiple
+
+    res_pts = []
+    for i, candidate_point in enumerate(candidate_points):
+        projection = np.dot(candidate_point, lum_dir.T) / np.linalg.norm(lum_dir)**2
+        ray_origin = projection * lum_dir
+        ray_dir = candidate_point - ray_origin
+        for paralleletope_facet in paralleletope_facets:
+            vecs = computeParalleltopeCoords(ray_dir, paralleletope_facet, ray_origin)
+            # the intersection being less than t means that the point is outside the gamut
+            if vecs is not None and np.all(approx_gte(vecs[1:],0)) and np.all(approx_lte(vecs[1:],1)) and vecs[0] >= 0:
+                # print(f"direction intersects with gamut --  ray_origin {ray_origin} ray_dir {ray_dir} resulting intersection{vecs}\n")
+                res_pts +=[vecs[0] * ray_dir + ray_origin]
+                break
+    if len(res_pts) != len(candidate_points):
+        raise Exception(f"Some points were not projected onto the gamut, issue with algorithm? {res_pts}")
+    
+    return np.array(res_pts)

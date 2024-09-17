@@ -126,7 +126,7 @@ def getZonotope(matrix, dim, verbose=False):
     posfaces = []
     negfaces = []
     
-    for facet_ids in tqdm(facetids, disable=dim!=4):
+    for facet_ids in tqdm(facetids, disable=not verbose):
         pos_offset, neg_offset = facet_sums[facet_ids]
         polygon = getFacet(facet_ids, matrix, dim)
         posfaces += [[x + pos_offset for x in polygon]]
@@ -140,6 +140,14 @@ def getZonotopePoints(matrix, dim, verbose=False):
     return [facetids, facet_sums]
 
 
+def getZonotopeForIntersection(matrix, dim, verbose=False):
+    _, zonos, _ = getZonotope(matrix, dim, verbose)
+
+    processed_faces = []
+    for facet_ids, sums in zonos.items():
+        processed_faces.append([sums[0]] + [sums[0] + matrix[facet_ids[i]] for i in range(dim-1)])
+        processed_faces.append([sums[1]] + [sums[1] + matrix[facet_ids[i]] for i in range(dim-1)])
+    return np.array(processed_faces)
 
 def orderFace(face):
     ordered_list = [face[0]]
