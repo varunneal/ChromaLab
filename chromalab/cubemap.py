@@ -11,6 +11,7 @@ import random
 from .observer import transformToChromaticity, getHeringMatrix
 from .spectra import Spectra
 from .maxbasis import MaxBasis
+from .draw import configurePolyscopeFor2D, draw_circle_helper
 import numpy as np
 
 def sampleCubeMapFaces(list_of_faces, samples_per_line=5):
@@ -215,6 +216,15 @@ class CubeMap:
 
         return ii, dd, self.rgbs[ii]
     
+
+    def display_cubemap_in_ps(self, lumval, satval, side_len, prob_scrambled=0.0):
+        idxs, distances, rgb = self.get_cube_map_standard(lumval, satval, side_len, sampling_method=self.SamplingCubeMap.STD, radius_lim=1)
+        smql = self.point_cloud[idxs]
+
+        self._display_cube_map_polyscope(smql, rgb, side_len)
+
+
+    
     def display_cubemap_Q_orientation(self, lumval, satval, side_len, prob_scrambled=0.5):
         idxs, distances, rgb = self.get_cube_map_standard(lumval, satval, side_len, sampling_method=self.SamplingCubeMap.STD, radius_lim=1)
         
@@ -355,6 +365,33 @@ class CubeMap:
 
         self._display_cube_map(ax, rgb, side_len)
         plt.show()
+
+    def _display_cube_map_polyscope(self, smql, rgbs, side_len):
+        image_size = (600, 400)
+        configurePolyscopeFor2D(image_size[0], image_size[1])
+
+        cube_left_corner_pts = np.array([[1, 0], [0, 1], [1, 1], [2, 1], [3, 1], [1, 2]])
+
+        step = 1/side_len
+        # sample in the center of the square of each sub square
+        square = np.array([[i, j] for i in (np.arange(0, 1, step) + (1/2*step)) for j in np.arange(0, 1, step) + (1/2*step) ]).reshape(side_len, side_len, 2)
+        cubemap = np.array([ x + square for x in cube_left_corner_pts])/np.array([4, 3])
+
+        cm = cubemap.reshape(-1, 2)
+
+        circle_radius = 10
+        border = 10
+        sub_image_size = (image_size[0] - 2*border,  image_size[1] - 2*border)
+        q_range = [np.min(smql[:, 2]), np.max(smql[:, 2])]
+        print(q_range)
+        q_values = (smql[:, 2]- q_range[0])/(q_range[1] - q_range[0])
+        print(q_values)
+        colors = np.concatenate([rgbs, q_values[:, np.newaxis]], axis=1)
+        print(colors)
+        for i, location in enumerate(cm):
+            location = (int(location[0]*sub_image_size[0] + border), int(location[1]*sub_image_size[1] + border))
+            draw_circle_helper(location[0], location[1], circle_radius, colors[i], i)
+        return        
 
     def _display_cube_map_grayscale(self, dirname, smql, side_len):
         cube_left_corner_pts = np.array([[1, 0], [0, 1], [1, 1], [2, 1], [3, 1], [1, 2]])

@@ -505,10 +505,10 @@ class Observer:
         tmp = [[[x, 1], [x, 0]] for x in facet_ids]
         self.facet_ids = [y for x in tmp for y in x]
         points = np.array(list(facet_sums.values())).reshape(-1, self.dimension)
-        divisors = np.tile(np.repeat(np.arange(0.1, 1+step_size, step_size), 4).reshape(-1, 4), (len(points), 1))
-
-        # TODO: change 10 to a factor of step_size
-        self.point_cloud = np.repeat(points, 10, axis=0)*divisors
+        divisors = np.tile(np.repeat(np.arange(step_size, 1+step_size, step_size), 4).reshape(-1, 4), (len(points), 1))
+        
+        factor = 1 // step_size + (1 % step_size > 0)
+        self.point_cloud = np.repeat(points, factor, axis=0)*divisors
         
         rgbs = []
         for cuts, start in tqdm(self.facet_ids):
@@ -517,7 +517,7 @@ class Observer:
             rgbs+= [Spectra(ref).to_rgb(illuminant=self.illuminant)]
         
         self.rgbs = np.array(rgbs).reshape(-1, 3)
-        self.rgbs = np.repeat(self.rgbs, 10, axis=0)*divisors[:, :3]
+        self.rgbs = np.repeat(self.rgbs, factor, axis=0)*divisors[:, :3]
         return self.point_cloud, self.rgbs
 
     def get_optimal_colors(self)-> Union[npt.NDArray, npt.NDArray]:
@@ -555,14 +555,6 @@ class Observer:
     def get_trans_ref_from_idx(self, index:int) -> npt.NDArray:
         cuts, start = self.getFacetIdxFromIdx(index)
         return getReflectance(cuts, start, self.get_sensor_matrix(), self.dimension)
-    
-    def checkOptimalCondition(self):
-        list_combos = list(combinations(range(self.sensor_matrix.shape[1]), self.dimension-1))
-        for combination in list_combos:
-            subset = self.sensor_matrix[:, combination]
-            if np.linalg.matrix_rank(subset.T) < self.dimension-1:
-                return False
-        return True
 
 def getsRGBfromWavelength(wavelength):
     cmfs = MSDS_CMFS["CIE 1931 2 Degree Standard Observer"]
