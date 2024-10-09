@@ -72,7 +72,8 @@ from chromalab.observer import Cone, Observer, GovardovskiiNomogram
 import matplotlib.pyplot as plt
 import numpy as np
 
-GovardovskiiNomogram(wavelengths1,530).with_preceptoral(od=0.35, lens=1, macular=0).plot(name="No macular pigment")
+wavelengths = np.arange(400, 701, 1)  # set any wavelengths you want
+GovardovskiiNomogram(wavelengths,530).with_preceptoral(od=0.35, lens=1, macular=0).plot(name="No macular pigment")
 plt.legend()
 plt.show()
 ```
@@ -95,8 +96,8 @@ standard_trichromat = Observer.trichromat()
 standard_tetrachromat = Observer.tetrachromat()
 
 d65 = Illuminant.get("D65")
-print(trichromat.observe(D65))
-print(tetrachromat.observe(D65))
+print(standard_trichromat.observe(d65))
+print(standard_tetrachromat.observe(d65))
 ```
 
 **Ink mixing:**
@@ -112,7 +113,7 @@ Example usage:
 ```
 from chromalab.spectra import Spectra, Illuminant
 from chromalab.observer import Observer
-from chromalab.inks import InkGamut
+from chromalab.inks import InkGamut, CellNeugebauer
 import numpy as np
 
 cmy = # ... load neugebauer primaries dict. For CMY, keys will be length 3 binary sequences
