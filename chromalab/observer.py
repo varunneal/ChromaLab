@@ -245,7 +245,7 @@ class Cone(Spectra):
         return (~(C_r / denom)).as_energy()
 
     @staticmethod
-    def cone(peak, template="govardovskii", od=0.35, wavelengths=None):
+    def cone(peak, template="govardovskii", od=0.35, lens=1, macular=1,wavelengths=None):
         # TODO: support L, M, S, Q peak, besides numerical
         # TODO: want to add eccentricity and/or macular, lens control
         if not isinstance(peak, (int, float)):
@@ -349,9 +349,17 @@ class Observer:
     
     def neitz_tetrachromat(wavelengths=None, illuminant=None, verbose=False):
         # This is a "maximally well spaced" tetrachromat
-        l_cone = Cone.cone(555, wavelengths=wavelengths, template="neitz", od=0.35)
+        l_cone = Cone.cone(559, wavelengths=wavelengths, template="neitz", od=0.35)
         q_cone = Cone.cone(545, wavelengths=wavelengths, template="neitz", od=0.35)
         m_cone = Cone.cone(530, wavelengths=wavelengths, template="neitz", od=0.35)
+        s_cone = Cone.s_cone(wavelengths=wavelengths)
+        return Observer([s_cone, m_cone, q_cone, l_cone], illuminant=illuminant, verbose=verbose)
+
+    def govardovskii_tetrachromat(wavelengths=None, illuminant=None, verbose=False):
+        # This is a "maximally well spaced" tetrachromat
+        l_cone = Cone.cone(559, wavelengths=wavelengths, template="govardovskii", od=0.35)
+        q_cone = Cone.cone(545, wavelengths=wavelengths, template="govardovskii", od=0.35)
+        m_cone = Cone.cone(530, wavelengths=wavelengths, template="govardovskii", od=0.35)
         s_cone = Cone.s_cone(wavelengths=wavelengths)
         return Observer([s_cone, m_cone, q_cone, l_cone], illuminant=illuminant, verbose=verbose)
 
@@ -490,7 +498,7 @@ class Observer:
             ref = getReflectance(cuts, start, self.normalized_sensor_matrix, self.dimension)
             ref = np.concatenate([self.wavelengths[:, np.newaxis], ref[:, np.newaxis]], axis=1)
             rgbs+= [Spectra(ref).to_rgb(illuminant=self.illuminant)]
-        self.rgbs = np.array(self.get_optimal_rgbs()).reshape(-1, 3)
+        self.rgbs = np.array(rgbs).reshape(-1, 3)
         return self.rgbs
 
     def __find_optimal_colors(self) -> Union[npt.NDArray, npt.NDArray]:
