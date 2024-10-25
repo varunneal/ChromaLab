@@ -10,7 +10,7 @@ pandas
 scipy
 jupyter
 open3d
-polyscope
+tetrapolyscope
 alphashape
 colour-science
 pyglm

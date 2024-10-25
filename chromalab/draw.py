@@ -1,5 +1,5 @@
 import numpy as np
-import polyscope as ps  # https://polyscope.run/py/
+import tetrapolyscope as ps  # https://polyscope.run/py/
 import random
 import os
 import packcircles
