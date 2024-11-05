@@ -334,9 +334,44 @@ class IshiharaPlate:
 
             circle_color = in_p * self.inside_color + out_p * self.outside_color
             # self.__draw_ellipse([x-r, y-r, x+r, y+r], circle_color)
-            item, name = draw_circle_helper(x, y, r, circle_color, i)
+            r = random.choice([0.5, 0.7, 0.9, 1.0, 1.1, 1.2])
+            item, name = draw_circle_helper(x, y, r, np.clip(circle_color * r, 0, 1), i)
             self.object_names.append(name)
 
+    def export_even_odd_plate(self, filename):
+        """
+        Using generated geometry data and computed inside/outside proportions,
+        draw the plate.
+        """
+        assert None not in [self.circles, self.inside_props, self.outside_props]
+        lum_noise = [0.8, 0.9, 1.0, 1.1, 1.2]
+        lum_noise_per_circle = [lum_noise[random.randint(0, 4)] for _ in range(len(self.circles))]
+        for i, [x, y, r] in enumerate(self.circles):
+            in_p, out_p = self.inside_props[i], self.outside_props[i]
+
+            if not self.gradient:
+                in_p = 1 if in_p > 0.5 else 0
+                out_p = 1 - in_p
+            circle_color = in_p * self.inside_color + out_p * self.outside_color
+            item, name = draw_circle_helper(x, y, r, np.clip(circle_color[:3] * lum_noise_per_circle[i], 0, 1), i)
+            self.object_names.append(name)
+        
+        ps.screenshot(filename + "_even.png")
+        ps.remove_all_groups()
+        ps.remove_all_structures()
+
+        for i, [x, y, r] in enumerate(self.circles):
+            in_p, out_p = self.inside_props[i], self.outside_props[i]
+            if not self.gradient:
+                in_p = 1 if in_p > 0.5 else 0
+                out_p = 1 - in_p
+
+            circle_color = in_p * self.inside_color + out_p * self.outside_color
+            # self.__draw_ellipse([x-r, y-r, x+r, y+r], circle_color)
+            item, name = draw_circle_helper(x, y, r, np.clip(circle_color[3:] * lum_noise_per_circle[i], 0, 1), i)
+            self.object_names.append(name)
+
+        ps.screenshot(filename + "_odd.png")
 
     def __reset_geometry(self):
         """

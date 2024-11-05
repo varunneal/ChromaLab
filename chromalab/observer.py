@@ -568,11 +568,11 @@ def getsRGBfromWavelength(wavelength):
     cmfs = MSDS_CMFS["CIE 1931 2 Degree Standard Observer"]
     return XYZ_to_RGB(wavelength_to_XYZ(wavelength), "sRGB")
 
-def getSampledHyperCube(step_size, dimension):
+def getSampledHyperCube(step_size, dimension, outer_range=[[0, 1], [0, 1], [0, 1], [0, 1]]):
     """
     Get a hypercube sample of the space
     """
-    g = np.meshgrid(*[np.arange(0, 1+step_size, step_size) for _ in range(dimension)])
+    g = np.meshgrid(*[np.arange(outer_range[i][0], outer_range[i][1] + 0.0000001, step_size) for i in range(dimension)])
     return np.array(list(zip(*(x.flat for x in g))))
 
 def getSampledHyperCubeSurface(step_size, dimension):

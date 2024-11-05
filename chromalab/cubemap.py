@@ -242,6 +242,16 @@ class CubeMap:
         self._display_cube_map_square_rgb(dirname + "_rgb_scrambled", rgb, side_len, random_array=random_array, is_scrambled=True)
 
 
+    def display_cubemap_RGBOCV(self, lumval, satval, side_len, tetra_display):
+        idxs, distances, rgb = self.get_cube_map_standard(lumval, satval, side_len, sampling_method=self.SamplingCubeMap.STD, radius_lim=1)
+        smql = self.point_cloud[idxs]
+        dirname = "Q_orientation"
+        ends = ["_rgbocv"]
+        for end in ends:
+            os.makedirs(dirname + end, exist_ok=True)
+        # self._display_cube_map_grayscale(dirname + "_cubemap", smql, side_len)
+        self._display_cube_map_even_odd(dirname + "_rgbocv", smql, side_len, tetra_display)
+
     def get_cube_map(self, lumval, satval, side_len, radius_lim=0.025, sampling_method="hering", ):
          # hering basis metric
         candidate_points_hering = self._get_cubemap_samples_in_hering(lumval, satval, side_len)
@@ -418,6 +428,39 @@ class CubeMap:
             for i, location in enumerate(cm):
                 location = (int(location[0]*sub_image_size[0] + border), int(location[1]*sub_image_size[1] + border))
                 draw.ellipse([(location[0]-circle_radius, location[1]-circle_radius), (location[0]+circle_radius, location[1]+circle_radius)], fill=int(channel[i]))
+            image.save(dirname + f"/{list_names[j]}.png")
+
+    def _display_cube_map_even_odd(self, dirname, smql, side_len, tetradisplay):
+        cube_left_corner_pts = np.array([[1, 0], [0, 1], [1, 1], [2, 1], [3, 1], [1, 2]])
+
+        step = 1/side_len
+        # sample in the center of the square of each sub square
+        square = np.array([[i, j] for i in (np.arange(0, 1, step) + (1/2*step)) for j in np.arange(0, 1, step) + (1/2*step) ]).reshape(side_len, side_len, 2)
+        cubemap = np.array([ x + square for x in cube_left_corner_pts])/np.array([4, 3])
+
+        cm = cubemap.reshape(-1, 2)
+        
+        import PIL.ImageDraw as ImageDraw
+        import PIL.Image as Image
+
+        circle_radius = 7 * 2
+        image_size = (600*2, 400 *2)
+        border = 10 * 2
+        list_names = ["RGB", "OCV"]
+        sub_image_size = (image_size[0] - 2*border,  image_size[1] - 2*border)
+        weights = tetradisplay.convertActivationsToIntensities(smql.T/tetradisplay.factor)
+        # insert 0 for G and B channels
+        rgbocv_weights = np.clip(np.insert(arr=weights, obj=[1,1], values=0, axis=1), 0, 1)
+        for j in range(2):
+            channel = rgbocv_weights[:, 3*j:3*(j+1)] * 255
+            image = Image.new("RGB", image_size, color=0)
+            draw = ImageDraw.Draw(image)
+            for i, location in enumerate(cm):
+                location = (int(location[0]*sub_image_size[0] + border), int(location[1]*sub_image_size[1] + border))
+                color = tuple(np.array(channel[i]).astype(int))
+                # color = (0, 0, color[2]) # view channel by channel?
+                draw.ellipse([(location[0]-circle_radius, location[1]-circle_radius), (location[0]+circle_radius, location[1]+circle_radius)], fill=color)
+            image.resize((600, 400), resample=Image.LANCZOS)
             image.save(dirname + f"/{list_names[j]}.png")
 
     def _display_cube_map(self, ax, rgb, side_len):

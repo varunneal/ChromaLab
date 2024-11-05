@@ -8,7 +8,7 @@ from enum import Enum
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
-from colour import xyY_to_XYZ
+from colour import xyY_to_XYZ, sRGB_to_XYZ
 import pandas as pd
 
 from .zonotope import getZonotopeForIntersection
@@ -86,7 +86,7 @@ def plotAxisAlignedProjections(points, axis_labels=['$B$', '$G$', '$R$']):
     plt.tight_layout()
     plt.show()
 
-_IN_GAMUT_TYPES = Literal["none", "clip_to_zero", "constant_ratio", "constant_luminance"]
+_IN_GAMUT_TYPES = Literal["none", "clip_to_zero", "constant_ratio", "constant_luminance", "minmax_gamut"]
 
 class ChromaticityDiagramType(Enum):
     XY=0
@@ -148,22 +148,39 @@ class DisplayGamut(ABC):
             return getResizedGamut(points, facets) # TODO: to redo to make the white point a certain direction? 
         elif type_ == "constant_luminance":
             facets = getZonotopeForIntersection(self.primary_intensities, self.dimension)
-            return getLumConstPoints(points, facets)  # TODO: to redo to make the white point a certain direction? 
+            return getLumConstPoints(points, facets)  # TODO: to redo to make the white point a certain direction?
+        elif type_ == "minmax_gamut" and type(self) == SixPrimaryDisplayGamut:
+            facetsRGB = getZonotopeForIntersection(self.primary_intensities[:, :3], 3)
+            facetsOCV = getZonotopeForIntersection(self.primary_intensities[:, 3:], 3)
+
+            # individually solve for each gamut (as there is only one facet in each case, early exit is faster than searching for two faces that intersect in a group)
+            # then take the min of the two solutions as you want the one that fits in both gamuts
+            out1, tmaxes1 = getLumConstPoints(points, facetsRGB)
+            out2, tmaxes2 = getLumConstPoints(points, facetsOCV)
+            true_out = np.zeros_like(out1)
+            true_out[tmaxes2 > tmaxes1] = out1[tmaxes2 > tmaxes1]
+            true_out[tmaxes2 <= tmaxes1] = out2[tmaxes2 <= tmaxes1]
+            return true_out
     
+
     def getMaxDisplayBasis(self):
         mat = np.linalg.inv(self.primary_intensities)
         # max_matrix = np.dot(self.cone_to_maxbasis, mat)
         return mat
 
     def setPrimariesWithSpectra(self, spectras):
-        self.primary_intensities = np.array([self.observer.observe(s) for s in spectras])
+        self.primary_spectras = spectras
+        self.primary_intensities = np.array([self.observer.observe_normalized(s) for s in spectras])
         self.chrom_intensities = self.chromaticity_transform(self.primary_intensities.T).T
         self.primary_colors = np.clip(np.array([s.to_rgb() for s in spectras]), 0, 1)
-
         self.M_ConeToPrimaries = np.linalg.inv(self.primary_intensities.T)
     
     def setMonochromaticPrimaries(self, primaries):
+        self.primary_spectras = [Spectra(wavelengths=self.wavelengths, data=np.zeros_like(self.wavelengths)) for _ in range(len(primaries))]
         idxs = np.searchsorted(self.wavelengths, primaries)
+        for i, p in enumerate(primaries):
+            self.primary_spectras[i].data[idxs[i]] = 1
+
         self.primary_intensities = np.array([self.matrix.T[i] for i in idxs])
         self.chrom_intensities = self.chromaticity_transform(self.primary_intensities.T).T
         self.primary_colors = np.clip(np.array([getsRGBfromWavelength(x) for x in primaries]), 0, 1)
@@ -261,6 +278,62 @@ class DisplayGamut(ABC):
     def displayPrimariesInChromDiagram(self, primaries=None): 
         raise NotImplementedError("Method not implemented")
 
+
+class SixPrimaryDisplayGamut(DisplayGamut):
+    
+    def __init__(self, observer, factor, verbose=False) -> None:
+        self.factor = factor
+        self.verbose = verbose
+        self.observer = observer
+        self.wavelengths = observer.wavelengths
+        self.matrix = observer.get_normalized_sensor_matrix()
+        self.dimension = observer.dimension
+
+    def computeBarycentricCoordinates(self):
+        pass
+
+    def displayPrimariesInChromDiagram(self):
+        pass
+
+    def mapPointsToGamut(self, points):
+        return np.clip(points, 0, 1)
+        facetsRGB = getZonotopeForIntersection(self.primary_intensities[:3], 3)
+        facetsOCV = getZonotopeForIntersection(self.primary_intensities[3:], 3)
+
+        # individually solve for each gamut (as there is only one facet in each case, early exit is faster than searching for two faces that intersect in a group)
+        # then take the min of the two solutions as you want the one that fits in both gamuts
+        out1, tmaxes1 = getLumConstPoints(points, facetsRGB)
+        out2, tmaxes2 = getLumConstPoints(points, facetsOCV)
+        true_out = np.zeros_like(out1)
+        true_out[tmaxes2 > tmaxes1] = out1[tmaxes2 > tmaxes1]
+        true_out[tmaxes2 <= tmaxes1] = out2[tmaxes2 <= tmaxes1]
+        return true_out
+
+    def setPrimariesWithSpectra(self, spectras):
+        self.primary_spectras = spectras
+        self.primary_intensities = np.array([self.observer.observe(s) for s in spectras]) * self.factor
+        self.primary_colors = np.clip(np.array([s.to_rgb() for s in spectras]), 0, 1)
+
+
+    def convert_sRGB_to_Positive_Primaries(self, sRGB):
+        XYZ = sRGB_to_XYZ(sRGB)
+        xyzs = np.array([s.to_xyz() for s in self.primary_spectras])
+        RGB_mat = np.linalg.inv(np.array(xyzs[:3]).T)
+        OCV_mat = np.linalg.inv(np.array(xyzs[3:]).T)
+        return self.mapPointsToGamut(np.dot(RGB_mat, XYZ.T).T/ self.factor), self.mapPointsToGamut(np.dot(OCV_mat, XYZ.T).T / self.factor)
+    
+    @staticmethod
+    def loadTutenLabDisplayInSixPrimaryMode(observer, factor=10000):
+        with resources.path("chromalab.leds", '6primaryDLP_SPD_data_20240821.csv') as data_path:
+            led_spectrums = np.array(pd.read_csv(data_path, skiprows=1)) # ordered as RGBOCV
+
+        wavelengths = led_spectrums[:, 0]
+        led_spectrums = convert_refs_to_spectras(led_spectrums[:, 1:].T, wavelengths)
+
+        tet_disp = SixPrimaryDisplayGamut(observer, factor)
+        tet_disp.setPrimariesWithSpectra(led_spectrums)
+        return tet_disp
+
 class TetraDisplayGamut(DisplayGamut):
     AXIS_LABELS = ['$S/A$', '$M/A$', '$Q/A$', '$L/A$']
     
@@ -269,12 +342,25 @@ class TetraDisplayGamut(DisplayGamut):
     """
     @staticmethod
     def loadTutenLabDisplay(observer, led_indices, transform=None):
-        with resources.path("chromalab.leds", '6primaryDLP_SPD_data_20240821.csv') as data_path:
+        # with resources.path("chromalab.leds", 'rgbo00.csv') as data_path:
+        with resources.path("chromalab.leds", 'rgbocv-11-1.csv') as data_path:
+        # with resources.path("chromalab.leds", '6primaryDLP_SPD_data_20240821.csv') as data_path:
+        # with resources.path("chromalab.leds", 'r00ocv.csv') as data_path:
             led_spectrums = np.array(pd.read_csv(data_path, skiprows=1)) # ordered as RGBOCV
-
+        # normalized_spectras = led_spectrums.copy()
+        # for i in range(1, led_spectrums.shape[1]):
+        #     peak = np.max(led_spectrums[:, i])
+        #     normalized_spectras[:, i] = led_spectrums[:, i] * (0.010 / peak)
         wavelengths = led_spectrums[:, 0]
         led_spectrums = convert_refs_to_spectras(led_spectrums[:, np.array(led_indices) + 1].T, wavelengths)
         # lms_activations = [observer.observe(s) for s in led_spectrums]
+
+        tet_disp = TetraDisplayGamut(observer, chromaticity_diagram_type=ChromaticityDiagramType.ConeBasis)
+        tet_disp.setPrimariesWithSpectra(led_spectrums)
+        return tet_disp
+    
+    def createDisplayFromSpectra(observer, wavelengths, spectras):
+        led_spectrums = convert_refs_to_spectras(spectras, wavelengths)
 
         tet_disp = TetraDisplayGamut(observer, chromaticity_diagram_type=ChromaticityDiagramType.ConeBasis)
         tet_disp.setPrimariesWithSpectra(led_spectrums)
@@ -369,6 +455,20 @@ class TetraDisplayGamut(DisplayGamut):
 
 class TriDisplayGamut(DisplayGamut):
     AXIS_LABELS = ['$S/A$', '$M/A$', '$L/A$']
+
+    @staticmethod
+    def loadTutenLabDisplay(observer, led_indices, transform=None):
+        with resources.path("chromalab.leds", '6primaryDLP_SPD_data_20240821.csv') as data_path:
+        # with resources.path("chromalab.leds", 'r00ocv.csv') as data_path:
+            led_spectrums = np.array(pd.read_csv(data_path, skiprows=1)) # ordered as RGBOCV
+
+        wavelengths = led_spectrums[:, 0]
+        led_spectrums = convert_refs_to_spectras(led_spectrums[:, np.array(led_indices) + 1].T, wavelengths)
+        # lms_activations = [observer.observe(s) for s in led_spectrums]
+
+        tri_disp = TriDisplayGamut(observer, chromaticity_diagram_type=ChromaticityDiagramType.ConeBasis)
+        tri_disp.setPrimariesWithSpectra(led_spectrums)
+        return tri_disp
 
     def computeBarycentricCoordinates(self, coordinates, p):
         v0 = coordinates[1] - coordinates[0]
@@ -550,6 +650,7 @@ def getLumConstPoints(candidate_points, paralleletope_facets):
         candidate_points = candidate_points * multiple
 
     res_pts = []
+    tmaxes = []
     for i, candidate_point in enumerate(candidate_points):
         projection = np.dot(candidate_point, lum_dir.T) / np.linalg.norm(lum_dir)**2
         ray_origin = projection * lum_dir
@@ -560,8 +661,9 @@ def getLumConstPoints(candidate_points, paralleletope_facets):
             if vecs is not None and np.all(approx_gte(vecs[1:],0)) and np.all(approx_lte(vecs[1:],1)) and vecs[0] >= 0:
                 # print(f"direction intersects with gamut --  ray_origin {ray_origin} ray_dir {ray_dir} resulting intersection{vecs}\n")
                 res_pts +=[vecs[0] * ray_dir + ray_origin]
+                tmaxes += [vecs[0]]
                 break
     if len(res_pts) != len(candidate_points):
         raise Exception(f"Some points were not projected onto the gamut, issue with algorithm? {res_pts}")
     
-    return np.array(res_pts)
+    return np.array(res_pts), np.array(tmaxes)

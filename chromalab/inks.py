@@ -127,17 +127,20 @@ def lsh_buckets(points, ignored_axis=2):
     return hash_values
 
 
-def bucket_points(points: npt.NDArray , axis=2):
+def bucket_points(points: npt.NDArray , axis=2, prec=0.005, exponent=8) -> Dict:
     # disjointed buckets
     buckets = defaultdict(list)
     N, d = points.shape
 
-    prec = 0.005
+    # prec = 0.005
+    # prec = 0.0005
     # prec = 0.0000005
     # 8 is large enough for prec = 0.005:
     # 8 > log_2 (1 / 0.005)
     # 22 > log_2(1/0.0000005)
-    weights = (2 ** (8 * np.arange(0, d)))
+    # 14 > log_2(1/0.00005)
+    # weights = (2 ** (8 * np.arange(0, d)))
+    weights = (2 ** (exponent * np.arange(0, d)))
     # weights = (2 ** (22 * np.arange(0, d)))
     weights[axis] = 0
 
@@ -171,10 +174,10 @@ def sort_buckets(buckets, axis=2) -> List:
 
     return sorted(dist_buckets, reverse=True)
 
-def get_metamer_buckets(points, axis=2):
+def get_metamer_buckets(points, axis=2, prec=0.005, exponent=8) -> List:
     sorted_points = []
 
-    buckets = sort_buckets(bucket_points(points, axis=axis), axis=axis)
+    buckets = sort_buckets(bucket_points(points, axis=axis, prec=prec, exponent=exponent), axis=axis)
     for dst, (i, j) in buckets:
         sorted_points.append((dst, (tuple(points[i]), tuple(points[j]))))
 

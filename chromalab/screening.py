@@ -53,12 +53,16 @@ class ScreeningTest:
                    for i in range(4)]
         return getSampledHyperCube(0.004, 4, outer_range)
     
-    def __refine_metamers(self, metamer_1, metamer_2, intensities):
-        pass
+    def __refine_metamers(self, weights_1, weights_2, intensities):
+        hypercube1 = self.__get_refined_hypercube(weights_1, self.hypercube_sample * 2)
+        hypercube2 = self.__get_refined_hypercube(weights_2, self.hypercube_sample * 2)
+        hypercube = np.vstack([hypercube1, hypercube2])
+        return self.__get_top_metamer(intensities, hypercube, prec=0.0005, exponent=11)
 
-    def __get_top_metamer(self, intensities, hypercube):
+
+    def __get_top_metamer(self, intensities, hypercube, prec=0.005, exponent=8):
         all_lms_intensities = (intensities@hypercube.T).T # multiply all possible led combinations with the intensities
-        buckets = get_metamer_buckets(all_lms_intensities, axis=2)
+        buckets = get_metamer_buckets(all_lms_intensities, axis=2, prec=prec, exponent=exponent)
         if self.randomIndex:
             random_index = np.random.randint(int(len(buckets)* 0.3))
         else:
@@ -66,20 +70,28 @@ class ScreeningTest:
         dst, (metamer_1, metamer_2) = buckets[random_index]
         return metamer_1, metamer_2
     
+
     def __get_metamers(self, observers):
         factor = 10000
         metamers_per_observer = []
         for observer in tqdm(observers):
-            d = TetraDisplayGamut.loadTutenLabDisplay(observer, led_indices=[0, 3, 4, 5])
+            d = TetraDisplayGamut.loadTutenLabDisplay(observer, led_indices=[1, 3, 4, 5])
             # d = TetraDisplayGamut.loadTutenLabDisplay(observer, led_indices=[0, 3, 4, 5])
             # d = TetraDisplayGamut.loadTutenLabDisplay(observer, led_indices=[0, 1, 2, 3])
             intensities = d.primary_intensities.T * factor # columns are the ratios, also 10000 is the factor in order to get the get buckets function to work
-            metamer_1, metamer_2= self.__get_top_metamer(intensities, self.hypercube)
-            
+            metamer_1, metamer_2 = self.__get_top_metamer(intensities, self.hypercube)
             weights_4tup = d.convertActivationsToIntensities(np.array([np.array(metamer_1)/factor, np.array(metamer_2)/factor]).T)
-            print((d.primary_intensities.T@weights_4tup.T).T * factor)
+            # print("Actual first metamers, ", metamer_1, metamer_2)
+            # print("Initial Metamers", (d.primary_intensities.T@weights_4tup.T).T * factor)
+
+            metamer_1, metamer_2 = self.__refine_metamers(weights_4tup[0], weights_4tup[1], intensities)
+            # print("Actual finetuned metamers, ", metamer_1, metamer_2)
+            weights_4tup = d.convertActivationsToIntensities(np.array([np.array(metamer_1)/factor, np.array(metamer_2)/factor]).T)
+            print("Finetuned Metamers\n", (d.primary_intensities.T@weights_4tup.T).T * factor)
+            print("LED Weights\n", weights_4tup)
+
             # fix here as well
-            weights = np.insert(arr=weights_4tup, obj=[1, 1], values=0, axis=1)
+            weights = np.insert(arr=weights_4tup, obj=[0, 1], values=0, axis=1)
             metamers_per_observer+= [weights]
         return metamers_per_observer
     
@@ -93,7 +105,7 @@ class ScreeningTest:
         # load all images
         images = []
         for i in range(grid_size[0] * grid_size[1]):
-            img_path = f"{save_dir}/images/{i}-{ext}"
+            img_path = f"{save_dir}/images/{i}_{ext}"
             if os.path.exists(img_path):
                 images.append(Image.open(img_path))
             else:
@@ -118,7 +130,7 @@ class ScreeningTest:
             grid_img.paste(img, (x, y))
 
         grid_img.resize(canvas_size)
-        grid_img.save(f"{save_dir}/{save_dir}-{ext}")
+        grid_img.save(f"{save_dir}/{save_dir}_{ext}")
         
 
     def create_observers_vs_noise(self):
@@ -127,5 +139,5 @@ class ScreeningTest:
                 # insert 0 for G and B channels
                 self.__create_pseudoisochromatic_plate(self.dirname, i, j, metamer_1, metamer_2)
 
-        self.create_image_grid(self.dirname, ext='rgb.png', grid_size=(len(self.observers), self.num_noise_levels), canvas_size=(1140, 912))
-        self.create_image_grid(self.dirname, ext='ocv.png', grid_size=(len(self.observers), self.num_noise_levels), canvas_size=(1140, 912))
+        self.create_image_grid(self.dirname, ext='RGB.png', grid_size=(len(self.observers), self.num_noise_levels), canvas_size=(1140, 912))
+        self.create_image_grid(self.dirname, ext='OCV.png', grid_size=(len(self.observers), self.num_noise_levels), canvas_size=(1140, 912))

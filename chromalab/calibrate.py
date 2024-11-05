@@ -190,7 +190,7 @@ def save_spectrum_to_csv(filename):
     data = np.row_stack((nm[:1], power))
     np.savetxt('spectras.csv', data.T, delimiter=',', header='Wavelength,R,O,C,V', comments='')
 
-def load_spectrum_from_npy(self, filename):
+def load_spectrum_from_npy(filename):
     data = np.load(filename)
     nm, power = data[:, 0], data[:, 1]
     return nm, power
@@ -198,8 +198,8 @@ def load_spectrum_from_npy(self, filename):
 def save_spectra_to_six_channel(spectra_filename, save_filename):
     spectras = np.load(spectra_filename)
     lols = np.array([spectras[0, 0]] + [spectras[i, 1] for i in range(spectras.shape[0])]).T # wavelengths + 4 spectra
-    new_csv = np.insert(arr=lols, obj=[5, 5], values=0, axis=1)
-    np.savetxt(save_filename, new_csv, delimiter=',', header='Wavelength,R,G,B,O,C,V')
+    # new_csv = np.insert(arr=lols, obj=[5, 5], values=0, axis=1)
+    np.savetxt(save_filename, lols, delimiter=',', header='Wavelength,R,G,B,O,C,V')
 
 # Example usage:
 if __name__ == "__main__":
